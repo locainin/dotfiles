@@ -2,3 +2,5 @@
 zsh/.config/zsh/cache/
 # compiled zsh bytecode artifacts
 zsh/.config/zsh/**/*.zwc
+
+__pycache__
