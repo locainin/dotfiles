@@ -62,8 +62,10 @@ _smartcd_resolve_ci() {
     local -a candidates
     if [[ "$seg" == .* ]]; then
       candidates=("$current_dir"/.*(/N))
+      candidates+=("$current_dir"/.*(@N))
     else
       candidates=("$current_dir"/*(/N))
+      candidates+=("$current_dir"/*(@N))
     fi
     local lower_seg="${seg:l}"
     local matched=""
