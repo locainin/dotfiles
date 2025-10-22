@@ -4,7 +4,92 @@
 # Enhances `cd` with fuzzy directory search and optional fzf selection.
 # ------------------------------------------------------------------------------
 
-# smartcd augments cd with fd search and optional fzf selection
+# smartcd augments cd with case-insensitive path resolve, then fd search
+
+# _smartcd_resolve_ci resolves a path case-insensitively per segment
+# returns resolved path on stdout if it exists; non-zero if not found
+_smartcd_resolve_ci() {
+  emulate -L zsh
+  setopt localoptions null_glob
+
+  local original="$1"
+  [[ -z "$original" ]] && return 1
+
+  local path_in="$original"
+  # expand ~ early
+  if [[ "$path_in" == \~* && "$path_in" != '~-' && "$path_in" != '~+' ]]; then
+    path_in="${path_in/#\~/$HOME}"
+  fi
+
+  local current_dir
+  local -a parts
+  # absolute vs relative
+  if [[ "$path_in" == /* ]]; then
+    current_dir="/"
+  else
+    current_dir="$PWD"
+  fi
+
+  # split into parts safely
+  parts=(${(s:/:)path_in})
+
+  local index=1
+  local total=${#parts[@]}
+  local seg
+  for seg in "${parts[@]}"; do
+    # skip empties (from leading / or repeated //)
+    [[ -z "$seg" ]] && { (( index++ )); continue }
+    # handle dot segments
+    if [[ "$seg" == "." ]]; then
+      (( index++ ))
+      continue
+    fi
+    if [[ "$seg" == ".." ]]; then
+      current_dir="${current_dir:h}"
+      (( index++ ))
+      continue
+    fi
+
+    local target="$current_dir/$seg"
+    # exact match first
+    if [[ -d "$target" ]]; then
+      current_dir="$target"
+      (( index++ ))
+      continue
+    fi
+
+    # case-insensitive match among entries; include hidden only if seg starts with '.'
+    local -a candidates
+    if [[ "$seg" == .* ]]; then
+      candidates=("$current_dir"/.*(/N))
+    else
+      candidates=("$current_dir"/*(/N))
+    fi
+    local lower_seg="${seg:l}"
+    local matched=""
+    local cand
+    for cand in "${candidates[@]}"; do
+      local name="${cand:t}"
+      if [[ "${name:l}" == "$lower_seg" ]]; then
+        matched="$name"
+        break
+      fi
+    done
+    if [[ -n "$matched" ]]; then
+      current_dir="$current_dir/$matched"
+      (( index++ ))
+      continue
+    fi
+
+    # not found at this segment
+    return 1
+  done
+
+  # final directory must exist
+  [[ -d "$current_dir" ]] || return 1
+  print -r -- "$current_dir"
+}
+
 smartcd() {
   emulate -L zsh
   setopt localoptions pipefail
@@ -30,6 +115,15 @@ smartcd() {
   if [[ -d "$expanded" ]]; then
     builtin cd -- "$expanded"
     return
+  fi
+
+  # try case-insensitive, segment-wise resolution
+  local resolved_ci
+  if resolved_ci=$(_smartcd_resolve_ci "$expanded" 2>/dev/null); then
+    if [[ -n "$resolved_ci" && -d "$resolved_ci" ]]; then
+      builtin cd -- "$resolved_ci"
+      return
+    fi
   fi
 
   if ! command -v fd >/dev/null 2>&1; then
