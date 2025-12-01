@@ -1,0 +1,301 @@
+/* waybar • hybrid style (Kitty palette x glass pills) */
+
+@import url("colors.css");
+
+/* ——— palette: inline (no external imports) */
+@define-color fg           #e0e0e0;
+@define-color fg-muted     #a9b1d6;
+@define-color bg-clear     rgba(0,0,0,0);          /* fully transparent bar */
+@define-color pill         rgba(21,18,27,0.22);    /* lighter glass for blur */
+@define-color pill-active  rgba(255,255,255,0.16);
+@define-color border       #2a2f41;
+
+@define-color blue         #7aa2f7;
+@define-color magenta      #bb9af7;
+@define-color cyan         #7dcfff;
+@define-color green        #9ece6a;
+@define-color yellow       #e0af68;
+@define-color red          #f7768e;
+
+/* ——— global */
+* {
+  border: none;
+  border-radius: 0;
+  font-family: "Symbols Nerd Font Mono","Symbols Nerd Font","FiraCode Nerd Font Mono","JetBrainsMono Nerd Font Propo",monospace;
+  font-weight: 600;
+  font-size: 14px;
+  min-height: 0;
+  color: @fg;
+}
+
+/* ——— bar frame: invisible, floating with gaps */
+window#waybar {
+  background: @bg-clear;          /* wallpaper shows through */
+  margin: 8px 8px 0 8px;          /* match config.jsonc margin */
+  padding: 0;
+}
+
+/* tooltips */
+tooltip {
+  background: rgba(25,22,34,0.92);
+  border: 1px solid @border;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* ——— “glass pill” base applied to all modules */
+#window,
+#clock,
+#cpu,
+#memory,
+#pulseaudio,
+#backlight,
+#network,
+#battery,
+#tray,
+#custom-hyprland,
+#custom-notifications,
+#custom-weather,
+#custom-updates,
+#custom-arrow-left,
+#custom-arrow-right,
+#mode,
+#submap,
+#custom-mullvad,
+#custom-power {
+  background: @pill;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.04);
+  padding: 4px 10px;
+  margin: 4px 6px;
+  transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease, transform 160ms ease;
+}
+
+/* center window title can breathe a bit if you use it */
+#window { padding: 4px 14px; }
+
+/* ——— clock */
+#clock {
+    padding-left: 16px;
+    padding-right: 16px;
+    border-radius: 5px 5px 20px 20px;
+    border: solid 3px;
+    border-color: #6a4fa3;
+    transition: background 0.3s ease, border-radius 0.3s ease;
+    color: #efe9ff;
+    background: rgba(45, 25, 80, 0.35);
+}
+
+#clock:hover {
+    border-radius: 20px 20px 5px 5px;
+    background: rgba(90, 60, 150, 0.45);
+}
+
+
+/* ——— meters & status */
+#cpu, #memory { color: @cyan; }
+#cpu.warning { color: @yellow; }
+#cpu.critical { color: @red; }
+#backlight   { color: @yellow; }
+#network     { color: @magenta; }
+#network.disconnected { opacity: 0.6; }
+
+#battery     { color: @green; }
+#battery.warning  { color: @yellow; }
+#battery.critical { color: @red; }
+#battery.critical:not(.charging) {
+  animation: blink 1s linear infinite alternate;
+}
+@keyframes blink { from { opacity: 1; } to { opacity: 0.35; } }
+
+/* audio module pill */
+#pulseaudio {
+  color: @blue;
+  border-radius: 10px;
+}
+#pulseaudio.muted { color: @red; }
+
+/* bluetooth “showcase” */
+#bluetooth { color: @magenta; }
+
+#custom-hyprland {
+  color: @blue;
+  font-weight: 700;
+}
+
+#custom-notifications { color: @magenta; }
+#custom-notifications.notification { color: @yellow; }
+#custom-notifications.dnd-none,
+#custom-notifications.dnd-inhibited-none { opacity: 0.75; }
+#custom-notifications.unread { color: @yellow; }
+#custom-notifications.dnd { color: @magenta; }
+
+#custom-weather { color: @blue; }
+
+#custom-updates { color: @yellow; }
+
+#group-info {
+  background: transparent;
+  padding: 0;
+  margin-left: 8px;
+}
+
+#custom-arrow-right,
+#custom-arrow-left {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 2px 8px;
+  margin: 0 4px;
+  font-size: 18px;
+  color: @fg;
+}
+#custom-arrow-right { color: @blue; }
+#custom-arrow-left { color: @magenta; }
+
+#group-hub {
+  background: transparent;
+  padding: 0;
+}
+
+.drawer-hidden {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* mullvad state colors (your script sets classes) */
+#custom-mullvad.connected    { color: @green; }
+#custom-mullvad.disconnected { color: @red; }
+#custom-mullvad { background: @pill; } /* keep subtle badge */
+
+/* tray */
+#tray { padding: 2px 8px; }
+#tray > .passive { opacity: 0.7; }
+#tray > .needs-attention {
+  background: @red; color: #191622; border-radius: 6px;
+}
+
+/* extra rounding on the right stack */
+#custom-mullvad,
+#network,
+#cpu,
+#pulseaudio,
+#backlight,
+#battery,
+#tray,
+#custom-notifications,
+#custom-weather,
+#custom-updates,
+#custom-power {
+  border-radius: 999px;
+  padding: 3px 8px;
+  margin: 1px 1px;
+}
+
+/* tighten right stack spacing */
+#custom-mullvad,
+#network,
+#cpu,
+#pulseaudio,
+#backlight,
+#battery,
+#custom-notifications,
+#custom-weather,
+#custom-updates,
+#custom-power {
+  padding: 3px 8px;
+  margin: 1px 1px;
+}
+#tray {
+  padding: 2px 8px;
+  margin: 1px 1px;
+}
+
+/* subtle dividers on the right stack */
+#custom-mullvad,
+#network,
+#cpu,
+#pulseaudio,
+#backlight,
+#battery,
+#custom-notifications,
+#custom-weather,
+#custom-updates,
+#custom-power {
+  box-shadow: inset -1px 0 rgba(255,255,255,0.05);
+}
+
+/* neon rim + lift on hover for major modules */
+#window:hover,
+#cpu:hover,
+#memory:hover,
+#pulseaudio:hover,
+#backlight:hover,
+#network:hover,
+#battery:hover,
+#tray:hover,
+#custom-hyprland:hover,
+#custom-notifications:hover,
+#custom-weather:hover,
+#custom-updates:hover,
+#mode:hover,
+#submap:hover,
+#custom-mullvad:hover,
+#custom-power:hover {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent; /* outline only */
+  border-image: linear-gradient(135deg, @blue, @magenta) 1;
+  border-image-slice: 1;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.20);
+}
+
+/* === Workspaces: thin neon outline instead of full fill === */
+#workspaces {
+  background: transparent;   /* no glass chip behind the group */
+  padding: 0 4px;
+  margin: 0;                 /* sits flush on the left like your screenshot */
+  border-radius: 0;
+}
+
+#workspaces button {
+  color: @fg-muted;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 5px 12px;
+  margin: 0 4px;
+  transition: all 180ms ease;
+}
+
+#workspaces button:hover {
+  color: @fg;
+  border-color: transparent;
+  border-image: linear-gradient(135deg, @blue, @magenta) 1;
+  background: linear-gradient(135deg, rgba(122,162,247,0.10), rgba(187,154,247,0.10));
+  box-shadow:
+    0 0 0 2px rgba(122,162,247,0.18),
+    0 0 0 4px rgba(187,154,247,0.12),
+    0 4px 12px rgba(0,0,0,0.22);
+}
+
+#workspaces button.active,
+#workspaces button.focused {
+  color: @fg;
+  background: linear-gradient(135deg, rgba(122,162,247,0.16), rgba(187,154,247,0.16));
+  border-color: transparent;
+  border-image: linear-gradient(135deg, @blue, @magenta) 1;
+  box-shadow:
+    0 0 0 2px rgba(122,162,247,0.22),
+    0 0 0 4px rgba(187,154,247,0.14),
+    0 4px 14px rgba(0,0,0,0.25);
+  letter-spacing: 0.25px;
+}
+
+#workspaces button.urgent {
+  color: #191622;
+  background: @yellow;
+}

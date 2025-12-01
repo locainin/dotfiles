@@ -1,0 +1,250 @@
+{
+  // Waybar core layout for Hyprland
+  // - top dock-style bar with drawers on both sides
+  // - all script hooks live under $HOME/.config/hypr/scripts to keep things portable
+
+  "layer": "top",
+  "position": "top",
+  "mode": "dock",
+  "exclusive": true,
+  "gtk-layer-shell": true,
+
+  // base look/feel
+  "height": 30,
+  "spacing": 0,
+  "fixed-center": true,
+  "hide-empty-modules": false,
+  "margin": "8 8 0 8",
+
+  // core module layout
+  // - left: Hypr toggle + workspaces + title + info drawer
+  // - center: clock
+  // - right: hub drawer + notifications + system status + power
+
+  "modules-left": [
+    "custom/hyprland",
+    "hyprland/workspaces",
+    "hyprland/window",
+    "group/info"
+  ],
+  "modules-center": [
+    "clock"
+  ],
+  "modules-right": [
+    "group/hub",
+    "custom/notifications",
+    "custom/mullvad",
+    "network",
+    "pulseaudio",
+    "backlight",
+    "tray",
+    "custom/power"
+  ],
+
+  // Hypr icon reuses scripts/vicinae-toggle.sh so Waybar clicks match Super tap behavior
+  "custom/hyprland": {
+    "format": "",
+    "tooltip": true,
+    "tooltip-format": "Hyprland // click to toggle Vicinae",
+    "on-click": "$HOME/.config/hypr/scripts/vicinae-toggle.sh",
+    "interval": 86400
+  },
+
+  // Hypr workspace module expects the persistent IDs seeded in conf.d/monitors.conf + scripts/workspace-cycle.sh
+  "hyprland/workspaces": {
+    "sort-by": "number",
+    "persistent-workspaces": {
+      "eDP-1": [1, 2, 3, 4, 5]
+    },
+    "format": "{id}",
+    "on-click": "activate"
+  },
+
+  "hyprland/window": {
+    "format": "{}",
+    "max-length": 60
+  },
+
+  // collapsible system info drawer
+  // - click arrow to reveal updates + cpu + memory
+  // - scripts/pacman-updates.sh drives custom/updates signal refresh
+  "group/info": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 250,
+      "transition-left-to-right": true,
+      "click-to-reveal": true,
+      "children-class": "drawer-hidden"
+    },
+    "modules": [
+      "custom/arrow-right",
+      "custom/updates",
+      "cpu",
+      "memory"
+    ]
+  },
+
+  "custom/arrow-right": {
+    "format": "",
+    "tooltip": false
+  },
+
+  // pacman status helper script
+  // - lives in scripts/pacman-updates.sh; path uses $HOME for portability
+  // - returns JSON with text/tooltip/class for custom/updates
+  "custom/updates": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "$HOME/.config/hypr/scripts/pacman-updates.sh",
+    "interval": 600,
+    "signal": 12,
+    "tooltip": true
+  },
+
+  "cpu": {
+    "interval": 3,
+    "format": " {usage}%",
+    "tooltip": true,
+    "states": { "warning": 70, "critical": 90 }
+  },
+
+  "memory": {
+    "interval": 5,
+    "format": " {percentage}%",
+    "states": { "warning": 75, "critical": 90 },
+    "tooltip-format": "{used:0.1f}G / {total:0.1f}G ({percentage}%)"
+  },
+
+  // center clock in friendly day / date / time format
+  "clock": {
+    "interval": 60,
+    "format": "{0:%a  |  %d %b  |  %I:%M %p}",
+    "tooltip": false
+  },
+
+  // right-side drawer
+  // - weather + battery match the power menu + scripts/weather.sh output
+  "group/hub": {
+    "orientation": "horizontal",
+    "drawer": {
+      "transition-duration": 250,
+      "transition-left-to-right": false,
+      "click-to-reveal": true,
+      "children-class": "drawer-hidden"
+    },
+    "modules": [
+      "custom/arrow-left",
+      "custom/weather",
+      "battery"
+    ]
+  },
+
+  "custom/arrow-left": {
+    "format": "",
+    "tooltip": false
+  },
+
+  // wttr.in poller backing the weather tile
+  // - scripts/weather.sh reads $WAYBAR_WEATHER_LOCATION so no city is hardcoded
+  // - path uses $HOME for portability
+  "custom/weather": {
+    "format": "{}",
+    "return-type": "json",
+    "exec": "$HOME/.config/hypr/scripts/weather.sh",
+    "interval": 900,
+    "tooltip": false
+  },
+
+  // simple battery block sharing state with the power menu
+  "battery": {
+    "interval": 10,
+    "states": { "good": 70, "warning": 30, "critical": 15 },
+    "format": "{icon} {capacity}%",
+    "format-charging": " {capacity}%",
+    "format-plugged": " {capacity}%",
+    "format-icons": ["", "", "", "", ""],
+    "tooltip-format": "Capacity: {capacity}%
+Power: {power}W
+Time: {timeTo}"
+  },
+
+  // Mullvad VPN status + controls
+  // - scripts/mullvad-status.sh prints JSON for text/class/tooltip
+  // - click: launch GUI, right-click: toggle VPN
+  // - paths use $HOME for portability
+  "custom/mullvad": {
+    "exec": "$HOME/.config/hypr/scripts/mullvad-status.sh",
+    "return-type": "json",
+    "format": "{text}",
+    "on-click": "$HOME/.config/hypr/scripts/mullvad-status.sh --launch",
+    "on-click-right": "$HOME/.config/hypr/scripts/mullvad-status.sh --toggle",
+    "interval": 2,
+    "signal": 11,
+    "tooltip": true
+  },
+
+  // network block
+  // - wifi: shows current {essid} only at runtime (no SSID is stored in this file)
+  // - alt format shows bandwidth up/down
+  "network": {
+    "interval": 3,
+    "format-wifi": " {essid}",
+    "format-ethernet": " {ifname}",
+    "format-disconnected": "Disconnected",
+    "format-alt": " {bandwidthUpBytes}B/s  {bandwidthDownBytes}B/s",
+    "tooltip": true,
+    "tooltip-format-wifi": "{essid}
+Signal: {signalStrength}% ({signaldBm} dBm)
+IPv4: {ipaddr}",
+    "tooltip-format-ethernet": "{ifname}
+IPv4: {ipaddr}",
+    "tooltip-format-disconnected": "Disconnected"
+  },
+
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 Muted",
+    "tooltip": true,
+    "scroll-step": 5,
+    "format-icons": {
+      "headphones": "",
+      "default": ["", "", ""]
+    }
+  },
+
+  // backlight scroll uses scripts/brightness-step.sh which also services brightness keybinds; path uses $HOME for portability
+  "backlight": {
+    "format": "{icon} {percent}%",
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
+    "tooltip": false,
+    "on-scroll-up": "$HOME/.config/hypr/scripts/brightness-step.sh up 2",
+    "on-scroll-down": "$HOME/.config/hypr/scripts/brightness-step.sh down 2"
+  },
+
+  "tray": {
+    "icon-size": 16,
+    "spacing": 8,
+    "show-passive-items": true
+  },
+
+  // ties into scripts/power-menu.sh which loads wleave/layout.json + wleave/style.css; path uses $HOME for portability
+  "custom/power": {
+    "format": "⏻",
+    "exec": "echo ; echo power",
+    "tooltip": true,
+    "on-click": "$HOME/.config/hypr/scripts/power-menu.sh",
+    "interval": 86400
+  },
+
+  // swaync badge; scripts/swaync-notifications.sh relays state + toggles DND; paths use $HOME for portability
+  "custom/notifications": {
+    "tooltip": true,
+    "return-type": "json",
+    "exec": "$HOME/.config/hypr/scripts/swaync-notifications.sh",
+    "on-click": "swaync-client -t -sw",
+    "on-click-middle": "$HOME/.config/hypr/scripts/swaync-notifications.sh toggle-dnd",
+    "on-click-right": "$HOME/.config/hypr/scripts/swaync-notifications.sh refresh",
+    "interval": 3,
+    "signal": 10
+  }
+}
