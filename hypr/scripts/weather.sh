@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Waybar weather helper for Hypr setup
-- Configure location via DEFAULT_LOCATION or WAYBAR_WEATHER_LOCATION env
-- Toggle city label via DEFAULT_SHOW_CITY or WAYBAR_WEATHER_SHOW_CITY=0/1
-- Prints a tiny JSON payload {"text": "..."} for Waybar custom/weather
+Weather helper for the Hypr Waybar configuration.
+The default location, city label, and unit system live here so you can change them once.
+Hypr env vars (WAYBAR_WEATHER_LOCATION / WAYBAR_WEATHER_SHOW_CITY / WAYBAR_WEATHER_UNITS)
+override these defaults when needed.
+The script prints a tiny JSON object for the Waybar custom/weather module.
 """
 
 from __future__ import annotations
@@ -14,144 +15,159 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from typing import Literal
 
 # ----------------------------
-# user-tunable defaults
+# defaults you are expected to edit
 # ----------------------------
-# set to your preferred string, e.g. "City, State"
-# env WAYBAR_WEATHER_LOCATION overrides this at runtime
-DEFAULT_LOCATION = "City, State"
-# set to True to show "City, State: <emoji> <temp>", False to hide the city label
-# env WAYBAR_WEATHER_SHOW_CITY overrides this at runtime
-DEFAULT_SHOW_CITY = True
+DEFAULT_LOCATION = "City, State"  # change this once if you do not want to use env vars
+DEFAULT_SHOW_CITY = True          # True -> "City: emoji temp", False -> "emoji temp"
+DEFAULT_UNITS: Literal["imperial", "metric"] = "imperial"  # imperial=°F, metric=°C
 # ----------------------------
 
-# cache file keeps the last successful value so we can show something when offline
-CACHE_PATH = Path(os.path.expanduser("~/.cache/waybar_weather"))
-CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-# prefer explicit env location when set, otherwise fall back to DEFAULT_LOCATION
-env_location = os.environ.get("WAYBAR_WEATHER_LOCATION", "").strip()
-location_display = env_location if env_location else DEFAULT_LOCATION.strip()
-
-# normalize show_city from env into a boolean, falling back to DEFAULT_SHOW_CITY
-show_city_env = os.environ.get("WAYBAR_WEATHER_SHOW_CITY", "").strip().lower()
-if show_city_env in {"1", "true", "yes"}:
-    show_city = True
-elif show_city_env in {"0", "false", "no"}:
-    show_city = False
-else:
-    show_city = bool(DEFAULT_SHOW_CITY)
+ENV_LOCATION = "WAYBAR_WEATHER_LOCATION"
+ENV_SHOW_CITY = "WAYBAR_WEATHER_SHOW_CITY"
+ENV_UNITS = "WAYBAR_WEATHER_UNITS"
 
 
-def emit(text: str) -> None:
-    # emit minimal JSON with escaped text for Waybar custom module
-    safe = text.replace("\\", "\\\\").replace('"', '\\"')
+@dataclass(frozen=True)
+class Settings:
+    # wraps the resolved location, city toggle, and unit system so downstream code stays tidy
+    location: str
+    show_city: bool
+    units: Literal["imperial", "metric"]
+
+
+@dataclass(frozen=True)
+class WeatherReading:
+    # holds the parsed values we actually render in Waybar (emoji + temp + optional label)
+    temp_text: str
+    condition: str
+    is_night: bool
+    moon_phase: str
+    location_label: str
+
+
+def error_exit(message: str) -> None:
+    # print a failure message so Waybar shows the outage instead of stale data
+    safe = message.replace("\\", "\\\\").replace('"', '\\"')
     sys.stdout.write(f'{{"text":"{safe}"}}\n')
-
-
-def cache_write(text: str) -> None:
-    # best-effort write; failures are non-fatal
-    try:
-        CACHE_PATH.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def cache_read() -> str | None:
-    # read cached text if present so we can show it when API calls fail
-    try:
-        return CACHE_PATH.read_text(encoding="utf-8")
-    except OSError:
-        return None
-
-
-# guard against placeholder location making accidental API calls
-if not location_display or location_display.lower() == "city, state":
-    emit("Set WAYBAR_WEATHER_LOCATION for weather")
     sys.exit(0)
 
 
-def fetch_weather_json(encoded_loc: str) -> str:
-    # ask wttr.in for compact JSON (j1) so we can inspect temp + astronomy
-    url = f"https://wttr.in/{encoded_loc}?format=j1"
+def load_settings() -> Settings:
+    # pull defaults plus env overrides into one Settings object
+    env_loc = os.environ.get(ENV_LOCATION, "").strip()
+    # prefer user-provided env location, otherwise fall back to the default above
+    location = env_loc if env_loc else DEFAULT_LOCATION.strip()
+    if not location or location.lower() == "city, state":
+        error_exit("Set WAYBAR_WEATHER_LOCATION for weather")
+
+    env_city = os.environ.get(ENV_SHOW_CITY, "").strip().lower()
+    if env_city in {"1", "true", "yes"}:
+        show_city = True
+    elif env_city in {"0", "false", "no"}:
+        show_city = False
+    else:
+        show_city = bool(DEFAULT_SHOW_CITY)
+
+    env_units = os.environ.get(ENV_UNITS, "").strip().lower()
+    # respect explicit unit request; otherwise use the default for the entire script
+    if env_units in {"metric", "c", "celsius"}:
+        units = "metric"
+    elif env_units in {"imperial", "f", "fahrenheit"}:
+        units = "imperial"
+    else:
+        units = DEFAULT_UNITS
+
+    return Settings(location=location, show_city=show_city, units=units)
+
+
+def fetch_weather_json(location: str) -> dict:
+    # call wttr.in JSON API for the resolved location and fail fast on errors
+    encoded = urllib.parse.quote_plus(location, safe=",")
+    url = f"https://wttr.in/{encoded}?format=j1"
     try:
         with urllib.request.urlopen(url, timeout=8) as resp:
-            return resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return ""
+            payload = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        error_exit(f"Weather: provider down ({exc.__class__.__name__})")
+
+    try:
+        return json.loads(payload)  # the response is tiny, so reading it fully is fine
+    except json.JSONDecodeError:
+        error_exit("Weather: provider returned malformed JSON")
+    return {}
 
 
-encoded_location = urllib.parse.quote_plus(location_display, safe=",")
-raw_json = fetch_weather_json(encoded_location)
+def parse_reading(data: dict, settings: Settings) -> WeatherReading:
+    # squeeze the JSON response down into only the fields we need for the widget
+    current = (data.get("current_condition") or [{}])[0]  # now/observed values
+    weather = (data.get("weather") or [{}])[0]            # day-level metadata
+    astronomy = (weather.get("astronomy") or [{}])[0]     # sunrise/sunset/moon info
 
-if not raw_json:
-    cached = cache_read()
-    emit(cached if cached else "Weather: N/A")
-    sys.exit(0)
+    if settings.units == "metric":
+        temp_raw = str(current.get("temp_C", "")).strip()
+        unit_suffix = "°C"
+    else:
+        temp_raw = str(current.get("temp_F", "")).strip()
+        unit_suffix = "°F"
 
-try:
-    data = json.loads(raw_json)
-except json.JSONDecodeError:
-    cached = cache_read()
-    emit(cached if cached else "Weather: N/A")
-    sys.exit(0)
+    if not temp_raw:
+        error_exit("Weather: missing temperature")
 
-current = (data.get("current_condition") or [{}])[0]
-weather = (data.get("weather") or [{}])[0]
-astronomy = (weather.get("astronomy") or [{}])[0]
+    # format temperature for display; drop leading '+' but retain '-' for negative temps
+    temp_text = temp_raw.lstrip("+") + unit_suffix
+    condition = str((current.get("weatherDesc") or [{}])[0].get("value", "")).strip()
+    local_dt = str(current.get("localObsDateTime", "")).strip()
+    moon_phase = str(astronomy.get("moon_phase", "")).strip()
+    is_night = determine_night(local_dt)
 
-# core fields we care about for the widget
-temp_f = str(current.get("temp_F", "")).strip()
-condition = str((current.get("weatherDesc") or [{}])[0].get("value", "")).strip()
-local_dt = str(current.get("localObsDateTime", "")).strip()
-moon_phase = str(astronomy.get("moon_phase", "")).strip()
-
-if temp_f == "":
-    cached = cache_read()
-    emit(cached if cached else "Weather: N/A")
-    sys.exit(0)
+    return WeatherReading(
+        temp_text=temp_text,
+        condition=condition,
+        is_night=is_night,
+        moon_phase=moon_phase,
+        location_label=settings.location,
+    )
 
 
-def is_night_time(local_str: str) -> bool:
-    # derive rough day vs night from localObsDateTime
-    # wttr format example: "2025-12-01 12:35 AM"
+def determine_night(local_str: str) -> bool:
+    # treat the location's local time between 20:00-06:59 as night so we can use moon icons
     try:
         dt = datetime.strptime(local_str, "%Y-%m-%d %I:%M %p")
-        hour = dt.hour
     except ValueError:
         return False
-    return hour >= 20 or hour < 7
+    return dt.hour >= 20 or dt.hour < 7
 
 
-def moon_icon(phase: str) -> str:
-    # map textual moon phase into a reasonably close unicode moon glyph
-    pl = phase.lower()
-    if "new" in pl:
+def moon_icon(moon_phase: str) -> str:
+    # map textual moon phase to the closest Unicode moon glyph
+    phase_lower = moon_phase.lower()
+    if "new" in phase_lower:
         return "🌑"
-    if "waxing crescent" in pl:
+    if "waxing crescent" in phase_lower:
         return "🌒"
-    if "first quarter" in pl:
+    if "first quarter" in phase_lower:
         return "🌓"
-    if "waxing gibbous" in pl:
+    if "waxing gibbous" in phase_lower:
         return "🌔"
-    if "full" in pl:
+    if "full" in phase_lower:
         return "🌕"
-    if "waning gibbous" in pl:
+    if "waning gibbous" in phase_lower:
         return "🌖"
-    if "last quarter" in pl or "third quarter" in pl:
+    if "last quarter" in phase_lower or "third quarter" in phase_lower:
         return "🌗"
-    if "waning crescent" in pl:
+    if "waning crescent" in phase_lower:
         return "🌘"
     return "🌙"
 
 
-def condition_icon(desc: str, night: bool) -> str:
-    # pick a single emoji based on condition keywords and whether it is night
-    # clear nights prefer a moon-phase icon; days prefer sun unless rainy or snowy
-    dl = desc.lower()
+def condition_icon(description: str, is_night: bool, moon_phase: str) -> str:
+    # map the text condition (rain, snow, clear, etc.) to one emoji
+    dl = description.lower()
     if "thunderstorm" in dl or "storm" in dl:
         return "⛈️"
     if "snow" in dl or "sleet" in dl or "blizzard" in dl:
@@ -163,18 +179,29 @@ def condition_icon(desc: str, night: bool) -> str:
     if "cloud" in dl or "overcast" in dl:
         return "☁️"
     if "clear" in dl or "sun" in dl:
-        return moon_icon(moon_phase) if night else "☀️"
-    return moon_icon(moon_phase) if night else "🌡️"
+        return moon_icon(moon_phase) if is_night else "☀️"
+    return moon_icon(moon_phase) if is_night else "🌡️"
 
 
-night = is_night_time(local_dt)
-icon = condition_icon(condition, night)
-temp_text = temp_f.lstrip("+") + "°F"
+def format_output(settings: Settings, reading: WeatherReading) -> str:
+    # build the final Waybar text string with or without the city label
+    icon = condition_icon(reading.condition, reading.is_night, reading.moon_phase)
+    if settings.show_city:
+        # default path: prefix with the location label so different bars can reuse the script easily
+        return f"{reading.location_label}: {icon} {reading.temp_text}"
+    return f"{icon} {reading.temp_text}"
 
-if show_city:
-    text = f"{location_display}: {icon} {temp_text}"
-else:
-    text = f"{icon} {temp_text}"
 
-cache_write(text)
-emit(text)
+def main() -> None:
+    # load settings, fetch data, format, and print the JSON payload
+    settings = load_settings()
+    # the fetch/parse steps intentionally exit with informative errors instead of caching
+    data = fetch_weather_json(settings.location)
+    reading = parse_reading(data, settings)
+    text = format_output(settings, reading)
+    safe = text.replace("\\", "\\\\").replace('"', '\\"')
+    sys.stdout.write(f'{{"text":"{safe}"}}\n')
+
+
+if __name__ == "__main__":
+    main()
