@@ -24,7 +24,7 @@ if [ -x "$HOME/.config/hypr/scripts/start-waybar.sh" ]; then
   "$HOME/.config/hypr/scripts/start-waybar.sh" --restart
 elif have waybar; then
   pkill -x waybar 2>/dev/null || true
-  setsid -f waybar >/devnull 2>&1 || true
+  setsid -f waybar >/dev/null 2>&1 || true
 fi
 
 if [ -x "$HOME/.config/hypr/scripts/start-swaync.sh" ]; then
