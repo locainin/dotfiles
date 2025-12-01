@@ -4,7 +4,7 @@ set -euo pipefail
 # simple weather helper for Waybar custom/weather drawer tile
 # - uses wttr.in and prints a tiny JSON payload {"text": "..."}
 # - location is configured via $WAYBAR_WEATHER_LOCATION
-#   (e.g. "City, State") 
+#   (e.g. "City, State")
 
 cache_file="${HOME}/.cache/waybar_weather"    # fallback cache used when network calls fail
 mkdir -p "$(dirname "$cache_file")"
