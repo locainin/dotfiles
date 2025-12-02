@@ -1,0 +1,18 @@
+/* wallust → waybar palette; loaded via colors-wallust.css */
+@define-color fg           #FFEAF1;
+@define-color fg-muted     #9F969A;
+@define-color bg-clear     rgba(21,20,23, 0.00);
+@define-color pill         rgba(21,20,23, 0.22);
+@define-color pill-active  rgba(255,234,241, 0.16);
+@define-color border       #403F42;
+@define-color clock-border #AB8792;
+@define-color clock-bg     rgba(58,58,60, 0.36);
+@define-color clock-hover  rgba(82,81,83, 0.46);
+@define-color clock-text   #FFEBF2;
+
+@define-color blue         #967D86;
+@define-color magenta      #9F7783;
+@define-color cyan         #BF92A0;
+@define-color green        #605B60;
+@define-color yellow       #7B6A73;
+@define-color red          #48474F;
