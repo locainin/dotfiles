@@ -1,0 +1,18 @@
+/* base palette fallback; mirrors original static colors so bar looks unchanged without wallust */
+@define-color fg           #e0e0e0;
+@define-color fg-muted     #a9b1d6;
+@define-color bg-clear     rgba(0,0,0,0);
+@define-color pill         rgba(21,18,27,0.22);
+@define-color pill-active  rgba(255,255,255,0.16);
+@define-color border       #2a2f41;
+@define-color clock-border #6a4fa3;
+@define-color clock-bg     rgba(45,25,80,0.35);
+@define-color clock-hover  rgba(90,60,150,0.45);
+@define-color clock-text   #efe9ff;
+
+@define-color blue         #7aa2f7;
+@define-color magenta      #bb9af7;
+@define-color cyan         #7dcfff;
+@define-color green        #9ece6a;
+@define-color yellow       #e0af68;
+@define-color red          #f7768e;

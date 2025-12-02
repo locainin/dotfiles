@@ -1,21 +1,8 @@
 /* waybar • hybrid style (Kitty palette x glass pills) */
 
-@import url("colors.css");
-
-/* ——— palette: inline (no external imports) */
-@define-color fg           #e0e0e0;
-@define-color fg-muted     #a9b1d6;
-@define-color bg-clear     rgba(0,0,0,0);          /* fully transparent bar */
-@define-color pill         rgba(21,18,27,0.22);    /* lighter glass for blur */
-@define-color pill-active  rgba(255,255,255,0.16);
-@define-color border       #2a2f41;
-
-@define-color blue         #7aa2f7;
-@define-color magenta      #bb9af7;
-@define-color cyan         #7dcfff;
-@define-color green        #9ece6a;
-@define-color yellow       #e0af68;
-@define-color red          #f7768e;
+@import url("colors-base.css");   /* fallback palette so bar stays stable if wallust is absent */
+@import url("colors-wallust.css");/* wallust overrides (regenerated per wallpaper) */
+@import url("colors.css");        /* keeps any extra schema values other modules might use */
 
 /* ——— global */
 * {
@@ -80,15 +67,15 @@ tooltip {
     padding-right: 16px;
     border-radius: 5px 5px 20px 20px;
     border: solid 3px;
-    border-color: #6a4fa3;
+    border-color: @clock-border;
     transition: background 0.3s ease, border-radius 0.3s ease;
-    color: #efe9ff;
-    background: rgba(45, 25, 80, 0.35);
+    color: @clock-text;
+    background: @clock-bg;
 }
 
 #clock:hover {
     border-radius: 20px 20px 5px 5px;
-    background: rgba(90, 60, 150, 0.45);
+    background: @clock-hover;
 }
 
 
@@ -169,7 +156,24 @@ tooltip {
 /* mullvad state colors (your script sets classes) */
 #custom-mullvad.connected    { color: @green; }
 #custom-mullvad.disconnected { color: @red; }
-#custom-mullvad { background: @pill; } /* keep subtle badge */
+#custom-mullvad {
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: @fg;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.28);
+}
+
+/* boost legibility for network + brightness badges on bright wallpapers */
+#network,
+#backlight {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255,255,255,0.06);
+  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.24);
+}
+#network { color: @magenta; }
+#backlight { color: @yellow; }
 
 /* tray */
 #tray { padding: 2px 8px; }
