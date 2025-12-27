@@ -1,364 +1,539 @@
 #!/usr/bin/env python3
 # smart split kitten: enforce max splits, manage window sizing, and guide layout flow
 
-from __future__ import annotations
-
 """
-smart_split kitten
+smart_split kitten entrypoint.
 
 Primary responsibilities:
 - Create controlled split layouts (max N panes per tab) with predictable placement.
-- Expand/shrink the OS window slightly to preserve usable cell geometry when going
-  from 1 pane → multiple panes (and reverse it when returning to 1 pane).
-
-Hyprland/Wayland rendering issue (workaround implemented here):
-- Observed on kitty (native Wayland) under Hyprland at scale=1.0:
-  Immediately after creating a new pane, the right/bottom edges of panes can be
-  clipped/misaligned. The render corrects itself after the kitty OS window loses
-  focus (commonly triggered by pointer focus leaving the window).
-
-Working hypothesis:
-- A compositor/client damage/repaint synchronization bug causes Hyprland to miss
-  a final repaint of the newly configured split viewport until a later focus
-  transition forces a full repaint.
-
-Mitigation:
-- After creating a new pane, trigger a compositor-level repaint by performing a
-  Hyprland focus round-trip within the *same workspace*:
-    1) Focus a different mapped window on the same workspace (if one exists)
-    2) Immediately refocus the original kitty window by Hyprland address
-- If no other mapped window exists on the workspace, fall back to:
-    a) focusmonitor bounce (current monitor) + refocus the kitty window
-    b) hyprctl dispatch forcerendererreload
-  which forces a repaint without requiring a second window.
-
-Scope, safety, and operational controls:
-- Applied only on Hyprland + Wayland (gated by Wayland detection and the
-  HYPRLAND_INSTANCE_SIGNATURE environment variable).
-- Can be disabled with KITTY_HYPRLAND_WAYLAND_SPLIT_WORKAROUND=0.
-- Debug logging (opt-in) via KITTY_HYPRLAND_WAYLAND_SPLIT_DEBUG=1 writes to:
-  $XDG_RUNTIME_DIR/kitty-hyprland-split-workaround.log
+- Optionally expand/shrink the OS window to preserve usable cell geometry.
+- Normalize layout after close actions and apply the Hyprland repaint workaround.
 """
 
+from __future__ import annotations
+
 import os
-import subprocess
 import time
 
 from kittens.tui.handler import result_handler
-from kitty.constants import is_wayland
+from kitty.fast_data_types import add_timer
 from kitty.typing_compat import BossType
+
+from smart_split_hyprland import split_repaint_focus_bounce
+from smart_split_kitty import (
+    active_tab,
+    active_tab_manager,
+    close_active_window,
+    tab_window_ids,
+    window_count,
+)
+from smart_split_layout import (
+    active_window_is_square_slot,
+    bottom_row_left_right,
+    canonical_order_from_pairs,
+    geometry_ready,
+    group_ids_ready,
+    layout_shape_matches,
+    normalize_layout,
+    order_by_geometry,
+    order_matches_geometry,
+    pane_sizes_ok,
+    three_pane_layout_inverted,
+)
+from smart_split_state import (
+    ensure_state,
+    sync_window_order,
+    wait_for_window_ids_change,
+    wait_for_window_ids_settle,
+)
 
 WIDTH_DELTA_CELLS = 8
 HEIGHT_DELTA_CELLS = 4
-
-_HYPRLAND_WAYLAND_SPLIT_WORKAROUND_ENV = "KITTY_HYPRLAND_WAYLAND_SPLIT_WORKAROUND"
-_HYPRLAND_WAYLAND_SPLIT_DEBUG_ENV = "KITTY_HYPRLAND_WAYLAND_SPLIT_DEBUG"
-
-
-def _is_hyprland_wayland() -> bool:
-    return is_wayland() and bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
-
-
-def _split_repaint_log(message: str) -> None:
-    if os.environ.get(_HYPRLAND_WAYLAND_SPLIT_DEBUG_ENV, "0").strip().lower() not in ("1", "true", "yes", "on"):
-        return
-
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime_dir:
-        return
-
-    try:
-        with open(os.path.join(runtime_dir, "kitty-hyprland-split-workaround.log"), "a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
-    except Exception:
-        return
-
-
-def _hyprctl_json(*args: str) -> dict:
-    # hyprctl JSON output is used to:
-    # - Read the currently focused window address (activewindow)
-    # - Enumerate candidates on the same workspace (clients)
-    proc = subprocess.run(
-        ["hyprctl", "-j", *args],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or f"hyprctl -j {' '.join(args)} failed")
-    import json
-
-    return json.loads(proc.stdout)
-
-
-def _hyprctl_dispatch(*args: str) -> None:
-    # Hyprland dispatcher invocations are intentionally minimal and scoped:
-    # - focuswindow address:<addr> (focus bounce within same workspace)
-    # - forcerendererreload (last resort, no focus change)
-    proc = subprocess.run(
-        ["hyprctl", "dispatch", *args],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or f"hyprctl dispatch {' '.join(args)} failed")
-
-
-def _split_repaint_focus_bounce() -> None:
-    setting = os.environ.get(_HYPRLAND_WAYLAND_SPLIT_WORKAROUND_ENV, "1").strip().lower()
-    if setting in ("0", "false", "no", "off"):
-        return
-
-    if not _is_hyprland_wayland():
-        return
-
-    try:
-        active = _hyprctl_json("activewindow")
-        address = active.get("address")
-        workspace = active.get("workspace") or {}
-        workspace_id = workspace.get("id")
-        if not address:
-            _split_repaint_log("skip: activewindow missing address")
-            return
-
-        # Prefer focusing another window on the *same workspace* to avoid triggering
-        # workspace switch animations.
-        #
-        # Previous approach used `focuscurrentorlast`, which can pick a window on a
-        # different workspace; on animated configs this looks like the OS window is
-        # "sliding" in/out. Constraining to same-workspace candidates removes that.
-        #
-        # Selection strategy:
-        # - Choose the most recently focused candidate on the same workspace
-        #   (smallest focusHistoryID other than the active window).
-        candidate_address: str | None = None
-        if isinstance(workspace_id, int):
-            clients = _hyprctl_json("clients")
-            candidates: list[tuple[int, str]] = []
-            for c in clients:
-                try:
-                    if not c.get("mapped", True) or c.get("hidden", False):
-                        continue
-                    if (c.get("workspace") or {}).get("id") != workspace_id:
-                        continue
-                    addr = c.get("address")
-                    if not addr or addr == address:
-                        continue
-                    hid = int(c.get("focusHistoryID", 10**9))
-                    candidates.append((hid, addr))
-                except Exception:
-                    continue
-            if candidates:
-                candidates.sort(key=lambda x: x[0])
-                candidate_address = candidates[0][1]
-
-        if candidate_address:
-            # Compositor-level repaint via focus transition. This mirrors the manual
-            # workaround (pointer focus leaving the window) without changing the
-            # workspace or the final focused window.
-            _hyprctl_dispatch("focuswindow", f"address:{candidate_address}")
-            _hyprctl_dispatch("focuswindow", f"address:{address}")
-            _split_repaint_log(f"ok: focus_bounce address={address} via={candidate_address}")
-        else:
-            # When no other mapped window exists on the workspace (for example,
-            # kitty is the only window and is effectively fullscreen), a normal
-            # focus bounce is not possible. In that situation:
-            # 1) Try a monitor focus "bounce" and then refocus the window. This
-            #    can trigger the same focus-driven repaint without involving a
-            #    different workspace or a second window.
-            # 2) Fall back to forcing a renderer reload (heavier, but does not
-            #    rely on focus state changes being possible).
-            try:
-                _hyprctl_dispatch("focusmonitor", "current")
-                _hyprctl_dispatch("focuswindow", f"address:{address}")
-                _split_repaint_log(f"ok: focusmonitor_bounce address={address}")
-            except Exception as e:
-                _split_repaint_log(f"warn: focusmonitor_bounce failed: {e!s}")
-
-            _hyprctl_dispatch("forcerendererreload")
-            _split_repaint_log(f"ok: forcerendererreload address={address}")
-    except Exception as e:
-        _split_repaint_log(f"error: {e!s}")
-        return
+_OS_RESIZE_ENV = "KITTY_SMART_SPLIT_OS_RESIZE"
 
 
 def main(args: list[str]) -> list[str]:
-    # parameters are handled in handle_result
+    # Parameters are handled in handle_result.
     return args
 
 
-def _active_tab_manager(boss: BossType):
-    attr = getattr(boss, 'active_tab_manager', None)
-    if callable(attr):
-        try:
-            return attr()
-        except Exception:
-            return None
-    return attr
+def _os_resize_enabled() -> bool:
+    """
+    Return True when OS window resizing is explicitly enabled.
+
+    Resizing is opt-in to avoid compositor geometry artifacts on split/close.
+    """
+    setting = os.environ.get(_OS_RESIZE_ENV, "0").strip().lower()
+    return setting in ("1", "true", "yes", "on")
 
 
-def _active_tab(boss: BossType):
-    attr = getattr(boss, 'active_tab', None)
-    if callable(attr):
-        try:
-            return attr()
-        except Exception:
-            return None
-    return attr
+def _ensure_order(
+    tab,
+    state: dict,
+    current_ids: list[int] | None = None,
+) -> list[int]:
+    """
+    Return a stable slot order for the current window ids.
+
+    The order is stored in state and rebuilt when stale.
+    """
+    window_ids = current_ids if current_ids is not None else tab_window_ids(tab)
+    order = state.get("order")
+    if not isinstance(order, list):
+        order = []
+    if len(order) != len(window_ids) or set(order) != set(window_ids):
+        # Prefer a stable creation order before falling back to geometry.
+        order = sync_window_order(state, window_ids, previous_ids=window_ids)
+        if len(order) != len(window_ids) or set(order) != set(window_ids):
+            # Fall back to geometry ordering when ids cannot be reconciled.
+            order = order_by_geometry(tab, window_ids)
+    state["order"] = order
+    return order
 
 
-def _window_count(tab) -> int:
-    try:
-        return len(tab.windows)
-    except Exception:
-        return 0
+def _parse_args(args: list[str]) -> tuple[int, str, str]:
+    """
+    Parse kitten arguments while accounting for the injected kitten name.
 
-
-@result_handler(no_ui=True)
-def handle_result(args: list[str], answer: object, target_window_id: int, boss: BossType) -> None:
+    Kitty prepends the kitten identifier to the argument list, so parsing starts
+    after the first element when it is not a numeric max window value.
+    """
     max_windows = 4
-    orientation = 'auto'
-    mode = 'split'
+    orientation = "auto"
+    mode = "split"
 
-    if args:
+    param_args = args
+    if args and not args[0].lstrip("-").isdigit():
+        param_args = args[1:]
+
+    if param_args:
         try:
-            max_windows = int(args[0])
+            max_windows = int(param_args[0])
         except Exception:
             pass
-        if len(args) > 1 and args[1] in ('hsplit', 'vsplit', 'auto'):
-            orientation = args[1]
-        if len(args) > 2 and args[2] in ('split', 'grow', 'shrink', 'close_window', 'close_tab'):
-            mode = args[2]
+        if len(param_args) > 1 and param_args[1] in ("hsplit", "vsplit", "auto"):
+            orientation = param_args[1]
+        if len(param_args) > 2 and param_args[2] in (
+            "split",
+            "grow",
+            "shrink",
+            "close_window",
+            "close_tab",
+            "normalize",
+        ):
+            mode = param_args[2]
 
-    tab = _active_tab(boss)
-    if tab is None:
-        return
+    return max_windows, orientation, mode
 
-    tm = _active_tab_manager(boss)
-    os_window_id = getattr(tm, 'os_window_id', None) if tm is not None else None
-    window_count = _window_count(tab)
 
-    state_store = getattr(boss, '_smart_split_state', None)
-    if state_store is None:
-        state_store = {}
-        setattr(boss, '_smart_split_state', state_store)
-    state_key = os_window_id if os_window_id is not None else '__default__'
-    state = state_store.setdefault(
-        state_key,
-        {
-            'expanded': False,
-            'width_delta': WIDTH_DELTA_CELLS,
-            'height_delta': HEIGHT_DELTA_CELLS,
-        },
-    )
-
-    if mode in ('shrink', 'close_window', 'close_tab'):
-        if mode == 'close_window' and window_count <= 1:
+def _wait_for_group_ids(tab, window_ids: list[int]) -> None:
+    """Wait briefly for window group ids to become available."""
+    for _ in range(12):
+        if group_ids_ready(tab, window_ids):
             return
-        should_shrink = state['expanded'] and window_count <= 2 and os_window_id is not None
-        if should_shrink:
+        time.sleep(0.03)
+
+
+def _schedule_normalize_after_close(
+    boss: BossType,
+    tab,
+    state: dict,
+    before_ids: list[int],
+    os_window_id: int | None,
+    order_after: list[int] | None,
+    desired_focus_id: int | None,
+) -> None:
+    """
+    Normalize the layout after a close once the window list has updated.
+
+    The delay prevents the normalization step from racing kitty's close handling.
+    """
+
+    def do_normalize(_timer_id: int | None) -> None:
+        after_ids = wait_for_window_ids_change(tab, before_ids)
+        if order_after:
+            expected_count = len(order_after)
+            # Await the expected window count to avoid racing the close path.
+            for _ in range(30):
+                if len(after_ids) == expected_count:
+                    break
+                time.sleep(0.03)
+                after_ids = tab_window_ids(tab)
+        after_ids = wait_for_window_ids_settle(tab)
+        _wait_for_group_ids(tab, after_ids)
+        order: list[int] = []
+        if order_after:
+            order = [wid for wid in order_after if wid in after_ids]
+        if len(order) != len(after_ids) or set(order) != set(after_ids):
+            # Preserve the post-close rotation order when possible.
+            order = [wid for wid in order if wid in after_ids]
+            for wid in after_ids:
+                if wid not in order:
+                    order.append(wid)
+        if len(order) != len(after_ids) or set(order) != set(after_ids):
+            order = sync_window_order(state, after_ids, previous_ids=before_ids)
+        # Apply the canonical layout to prevent stacked or nested splits.
+        order = normalize_layout(tab, order)
+        canonical_after = canonical_order_from_pairs(tab, after_ids)
+        if canonical_after:
+            # Keep state aligned with the canonical slot order after close.
+            order = canonical_after
+        if not layout_shape_matches(tab, len(after_ids)):
+            # Retry once after the layout settles; prefer explicit rotation order over geometry.
+            after_ids = wait_for_window_ids_settle(tab)
+            _wait_for_group_ids(tab, after_ids)
+            if order_after:
+                # Preserve the intended post-close slot rotation during recovery.
+                order = [wid for wid in order_after if wid in after_ids]
+                for wid in after_ids:
+                    if wid not in order:
+                        order.append(wid)
+            elif geometry_ready(tab, after_ids):
+                order = order_by_geometry(tab, after_ids)
+            else:
+                order = sync_window_order(state, after_ids, previous_ids=before_ids)
+            order = normalize_layout(tab, order)
+            canonical_after = (
+                canonical_order_from_pairs(tab, after_ids) or canonical_after
+            )
+            if canonical_after:
+                order = canonical_after
+        if len(after_ids) == 3 and three_pane_layout_inverted(tab, after_ids):
+            # Correct the inverted 3-pane tree produced by a top-row close from 4 panes.
+            recovery_order: list[int] = []
+            if order_after:
+                # Favor the rotation queue so the visual progression remains stable.
+                recovery_order = [wid for wid in order_after if wid in after_ids]
+                for wid in after_ids:
+                    if wid not in recovery_order:
+                        recovery_order.append(wid)
+            elif canonical_after and len(canonical_after) == 3:
+                recovery_order = canonical_after
+            elif geometry_ready(tab, after_ids):
+                recovery_order = order_by_geometry(tab, after_ids)
+            else:
+                recovery_order = sync_window_order(
+                    state, after_ids, previous_ids=before_ids
+                )
+            for _ in range(3):
+                order = normalize_layout(tab, recovery_order)
+                canonical_after = (
+                    canonical_order_from_pairs(tab, after_ids) or canonical_after
+                )
+                if canonical_after:
+                    order = canonical_after
+                if layout_shape_matches(tab, 3) and not three_pane_layout_inverted(
+                    tab, after_ids
+                ):
+                    break
+                time.sleep(0.03)
+        left_right_order: list[int] | None = None
+        if canonical_after:
+            left_right_order = canonical_after
+        elif geometry_ready(tab, after_ids):
+            left_right_order = order_by_geometry(tab, after_ids)
+        # Only force left/right when the layout is not already canonical.
+        should_force_left_right = (
+            len(after_ids) == 2
+            and left_right_order
+            and not layout_shape_matches(tab, 2)
+        )
+        if should_force_left_right:
+            # Enforce a left/right split after close to avoid stacked panes.
+            try:
+                tab.set_active_window(left_right_order[0])
+                boss.call_remote_control(
+                    None,
+                    ("action", "layout_action", "move_to_screen_edge", "left"),
+                )
+                try:
+                    tab.reset_window_sizes()
+                except Exception:
+                    pass
+                refreshed = canonical_order_from_pairs(tab, after_ids)
+                if refreshed:
+                    order = refreshed
+                    canonical_after = refreshed
+            except Exception:
+                pass
+        state["order"] = order
+        if (
+            _os_resize_enabled()
+            and os_window_id is not None
+            and state["expanded"]
+            and len(after_ids) == 1
+        ):
             try:
                 boss.resize_os_window(
                     os_window_id,
-                    width=-state['width_delta'],
-                    height=-state['height_delta'],
-                    unit='cells',
+                    width=-state["width_delta"],
+                    height=-state["height_delta"],
+                    unit="cells",
                     incremental=True,
                 )
             except Exception:
                 pass
             else:
-                state['expanded'] = False
-        if mode == 'close_window':
+                state["expanded"] = False
+            # Re-apply sizing after the OS window resize to avoid stale geometry.
+            order = normalize_layout(tab, order)
+            state["order"] = order
+        focus_id: int | None = None
+        if len(after_ids) == 2:
+            # When two panes remain, focus the right pane for a natural progression.
+            if canonical_after and len(canonical_after) == 2:
+                focus_id = canonical_after[1]
+            elif geometry_ready(tab, after_ids):
+                geometry_order = order_by_geometry(tab, after_ids)
+                if len(geometry_order) == 2:
+                    focus_id = geometry_order[1]
+        elif desired_focus_id is not None and desired_focus_id in after_ids:
+            focus_id = desired_focus_id
+        if focus_id is not None:
             try:
-                boss.close_window()
-            finally:
+                tab.set_active_window(focus_id)
+            except Exception:
+                pass
+        # Hyprland/Wayland may skip repaint after close/resize; force a bounce.
+        split_repaint_focus_bounce()
+
+    add_timer(do_normalize, 0.06, False)
+
+
+@result_handler(no_ui=True)
+def handle_result(
+    args: list[str], answer: object, target_window_id: int, boss: BossType
+) -> None:
+    max_windows, orientation, mode = _parse_args(args)
+
+    tab = active_tab(boss)
+    if tab is None:
+        return
+
+    tm = active_tab_manager(boss)
+    os_window_id = getattr(tm, "os_window_id", None) if tm is not None else None
+    current_ids = tab_window_ids(tab)
+    current_window_count = len(current_ids) if current_ids else window_count(tab)
+
+    state_key = os_window_id if os_window_id is not None else "__default__"
+    state = ensure_state(boss, state_key, WIDTH_DELTA_CELLS, HEIGHT_DELTA_CELLS)
+    if not _os_resize_enabled() and state["expanded"]:
+        # Resizing may be disabled while a prior expansion flag is still set.
+        state["expanded"] = False
+    # Track rotation order based on creation; geometry is used only when stale.
+    _ensure_order(tab, state, current_ids)
+
+    if mode == "normalize":
+        # Normalize after close operations have completed.
+        stable_ids = wait_for_window_ids_settle(tab)
+        order = sync_window_order(state, stable_ids)
+        order = normalize_layout(tab, order)
+        state["order"] = order
+        return
+
+    if mode in ("shrink", "close_window", "close_tab"):
+        if mode == "close_window" and current_window_count <= 1:
+            return
+        if mode == "shrink":
+            should_shrink = (
+                _os_resize_enabled()
+                and state["expanded"]
+                and current_window_count <= 2
+                and os_window_id is not None
+            )
+            if should_shrink:
                 try:
-                    tab.reset_window_sizes()
+                    boss.resize_os_window(
+                        os_window_id,
+                        width=-state["width_delta"],
+                        height=-state["height_delta"],
+                        unit="cells",
+                        incremental=True,
+                    )
                 except Exception:
                     pass
-        elif mode == 'close_tab':
+                else:
+                    state["expanded"] = False
+                # Keep the layout sized to the resized OS window.
+                order = sync_window_order(state, tab_window_ids(tab))
+                order = normalize_layout(tab, order)
+                state["order"] = order
+            return
+        if mode == "close_window":
+            before_ids = tab_window_ids(tab)
+            canonical_before = canonical_order_from_pairs(tab, before_ids)
+            if canonical_before:
+                # Use canonical layout order so close preserves slot rotation.
+                order_before = canonical_before
+            elif geometry_ready(tab, before_ids):
+                # Fall back to geometry order when the layout tree is unstable.
+                order_before = order_by_geometry(tab, before_ids)
+            else:
+                order_before = _ensure_order(tab, state, before_ids)
+            desired_focus_id = None
+            order_after: list[int] | None = None
+            if len(before_ids) == 4:
+                # Rotate 4→3 by row-major slot order to preserve the expected progression.
+                slot_order = None
+                if canonical_before and len(canonical_before) == 4:
+                    slot_order = canonical_before
+                elif geometry_ready(tab, before_ids):
+                    slot_order = order_by_geometry(tab, before_ids)
+                else:
+                    slot_order = order_before
+                if slot_order and target_window_id in slot_order:
+                    order_before = slot_order
+                    order_after = [wid for wid in slot_order if wid != target_window_id]
+            if target_window_id in order_before and len(order_before) > 1:
+                # Focus the next slot in rotation order after the closed window.
+                closed_index = order_before.index(target_window_id)
+                if desired_focus_id is None:
+                    desired_focus_id = order_before[
+                        (closed_index + 1) % len(order_before)
+                    ]
+            # Preserve rotation order by removing the closed id from the slot list.
+            if order_after is None:
+                order_after = [wid for wid in order_before if wid != target_window_id]
+            close_active_window(boss, target_window_id)
+            _schedule_normalize_after_close(
+                boss,
+                tab,
+                state,
+                before_ids,
+                os_window_id,
+                order_after,
+                desired_focus_id,
+            )
+        elif mode == "close_tab":
             try:
                 boss.close_tab()
             finally:
-                state['expanded'] = False
+                state["expanded"] = False
         return
 
-    if mode not in ('split', 'grow'):
+    if mode not in ("split", "grow"):
         return
 
-    if window_count >= max_windows:
+    if current_window_count >= max_windows:
+        return
+
+    if current_window_count == 3:
+        # Restrict 3-pane splits to the bottom slot to avoid square splits.
+        active_window = getattr(tab, "active_window", None)
+        active_window_id = getattr(active_window, "id", None)
+        geometry_order = order_by_geometry(tab, current_ids)
+        if (
+            active_window_id is None
+            or len(geometry_order) != 3
+            or active_window_id != geometry_order[2]
+        ):
+            return
+
+    if active_window_is_square_slot(tab):
+        # Prevent splitting panes that already occupy a square slot.
         return
 
     try:
-        boss.call_remote_control(None, ('goto-layout', 'splits'))
+        boss.call_remote_control(None, ("goto-layout", "splits"))
     except Exception:
         pass
 
-    chosen = orientation if orientation != 'auto' else 'vsplit'
-    rotate_root = False
+    chosen = orientation if orientation != "auto" else "vsplit"
     move_bottom = False
-    focus_before_split: str | None = None
 
-    if orientation == 'auto':
-        if window_count == 1:
-            chosen = 'vsplit'  # first split: left/right
-        elif window_count == 2:
-            # create a brand-new pane, then move THAT pane to the bottom edge
-            chosen = 'hsplit'
+    if orientation == "auto":
+        if current_window_count == 1:
+            chosen = "vsplit"  # first split: left/right
+        elif current_window_count == 2:
+            # Create a third pane, then move it to the bottom edge.
+            chosen = "hsplit"
             move_bottom = True
-        elif window_count == 3:
-            chosen = 'vsplit'
-            focus_before_split = 'down'
+        elif current_window_count == 3:
+            chosen = "vsplit"
         else:
-            chosen = 'vsplit' if window_count % 2 == 0 else 'hsplit'
+            chosen = "vsplit" if current_window_count % 2 == 0 else "hsplit"
 
-    if window_count == 1 and os_window_id is not None and not state['expanded']:
+    if (
+        _os_resize_enabled()
+        and current_window_count == 1
+        and os_window_id is not None
+        and not state["expanded"]
+    ):
         try:
             boss.resize_os_window(
                 os_window_id,
-                width=state['width_delta'],
-                height=state['height_delta'],
-                unit='cells',
+                width=state["width_delta"],
+                height=state["height_delta"],
+                unit="cells",
                 incremental=True,
             )
         except Exception:
             pass
         else:
-            state['expanded'] = True
+            state["expanded"] = True
 
-    if rotate_root:
-        try:
-            # correct RC form: generic 'action' + 'layout_action' + 'rotate'
-            boss.call_remote_control(None, ('action', 'layout_action', 'rotate'))
-        except Exception:
-            pass
-
-    if focus_before_split:
-        try:
-            boss.call_remote_control(None, ('action', 'neighboring_window', focus_before_split))
-        except Exception:
-            pass
-
-    launch_args = ['--cwd=current', f'--location={chosen}']
-    if window_count >= 1:
-        launch_args.append('--env=KITTY_SUPPRESS_BANNER=1')
+    before_ids = tab_window_ids(tab)
+    # Capture the pre-split order so the rotation queue remains stable.
+    order_before = _ensure_order(tab, state, before_ids)
+    launch_args = ["--cwd=current", f"--location={chosen}"]
+    if current_window_count >= 1:
+        launch_args.append("--env=KITTY_SUPPRESS_BANNER=1")
     boss.launch(*launch_args)
 
+    after_ids = wait_for_window_ids_change(tab, before_ids)
     if move_bottom:
+        new_ids_for_move = [wid for wid in after_ids if wid not in before_ids]
+        if len(new_ids_for_move) != 1:
+            # If the new pane has not appeared yet, wait for the list to settle.
+            after_ids = wait_for_window_ids_settle(tab)
+            new_ids_for_move = [wid for wid in after_ids if wid not in before_ids]
+        if len(new_ids_for_move) == 1:
+            try:
+                # Move the newly created pane into the bottom slot for 3-pane layouts.
+                tab.set_active_window(new_ids_for_move[0])
+                boss.call_remote_control(
+                    None,
+                    ("action", "layout_action", "move_to_screen_edge", "bottom"),
+                )
+            except Exception:
+                pass
+    after_ids = wait_for_window_ids_settle(tab)
+    new_ids = [wid for wid in after_ids if wid not in before_ids]
+    order = []
+    if len(new_ids) == 1:
+        new_id = new_ids[0]
+        if current_window_count in (1, 2):
+            # Append new panes as the next slot in the rotation order.
+            order = [wid for wid in order_before if wid in before_ids] + [new_id]
+        elif current_window_count == 3 and len(order_before) == 3:
+            bottom_id = order_before[2]
+            left_right = bottom_row_left_right(tab, bottom_id, new_id)
+            if left_right is not None:
+                # Slot order is row-major: top-left, top-right, bottom-left, bottom-right.
+                left_id, right_id = left_right
+                order = [order_before[0], order_before[1], left_id, right_id]
+    if len(order) != len(after_ids) or set(order) != set(after_ids):
+        order = sync_window_order(
+            state, after_ids, new_ids=new_ids, previous_ids=before_ids
+        )
+    # Normalize when the layout shape or slot ordering is off; avoid extra work otherwise.
+    layout_ok = layout_shape_matches(tab, len(after_ids))
+    geometry_ok = geometry_ready(tab, order) and order_matches_geometry(tab, order)
+    # Enforce minimum pane sizes to prevent tiny panes from lingering.
+    size_ok = pane_sizes_ok(tab, after_ids)
+    if not layout_ok or not geometry_ok or not size_ok:
+        _wait_for_group_ids(tab, after_ids)
+        order = normalize_layout(tab, order)
+        canonical_after = canonical_order_from_pairs(tab, after_ids)
+        if canonical_after:
+            # Refresh state with the canonical slot order post-normalization.
+            order = canonical_after
+    else:
         try:
-            boss.call_remote_control(None, ('action', 'layout_action', 'move_to_screen_edge', 'bottom'))
+            tab.reset_window_sizes()
         except Exception:
             pass
+    state["order"] = order
 
-    try:
-        tab.reset_window_sizes()
-    except Exception:
-        pass
-
-    # Force an immediate repaint after split creation on Hyprland/Wayland to avoid
-    # the transient right/bottom-edge clip until OS-window focus changes.
-    _split_repaint_focus_bounce()
+    # Force an immediate repaint after split creation on Hyprland/Wayland.
+    split_repaint_focus_bounce()

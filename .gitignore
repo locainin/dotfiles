@@ -4,3 +4,8 @@ zsh/.config/zsh/cache/
 zsh/.config/zsh/**/*.zwc
 
 __pycache__
+
+# kitty backups
+kitty/Backup/
+__pycache__/
+*.pyc
