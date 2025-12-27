@@ -126,6 +126,36 @@ def _parse_args(args: list[str]) -> tuple[int, str, str]:
     return max_windows, orientation, mode
 
 
+def _focus_after_close(
+    before_count: int,
+    after_count: int,
+    closed_index: int | None,
+    order: list[int],
+) -> int | None:
+    """
+    Return the focus target after a close based on row-major slot ordering.
+
+    The mapping keeps focus on the pane that shifts into the closed slot or the
+    natural replacement when a row collapses (bottom slot after a 4→3 close).
+    """
+    if not order or closed_index is None:
+        return None
+    if before_count == 2 and after_count == 1:
+        # Single remaining pane takes focus.
+        return order[0]
+    if before_count == 3 and after_count == 2:
+        # Top-left close focuses the new top-left; other closes focus the right pane.
+        return order[0] if closed_index == 0 else order[1]
+    if before_count == 4 and after_count == 3:
+        # Top-row closes focus the pane that shifts into that slot.
+        # Bottom-row closes focus the bottom pane that expands to full width.
+        return order[closed_index] if closed_index <= 1 else order[2]
+
+    # Fallback to the nearest surviving slot to keep focus deterministic.
+    fallback_index = min(closed_index, len(order) - 1)
+    return order[fallback_index]
+
+
 def _wait_for_group_ids(tab, window_ids: list[int]) -> None:
     """Wait briefly for window group ids to become available."""
     for _ in range(12):
@@ -141,7 +171,7 @@ def _schedule_normalize_after_close(
     before_ids: list[int],
     os_window_id: int | None,
     order_after: list[int] | None,
-    desired_focus_id: int | None,
+    closed_index: int | None,
 ) -> None:
     """
     Normalize the layout after a close once the window list has updated.
@@ -279,16 +309,15 @@ def _schedule_normalize_after_close(
             order = normalize_layout(tab, order)
             state["order"] = order
         focus_id: int | None = None
-        if len(after_ids) == 2:
-            # When two panes remain, focus the right pane for a natural progression.
+        focus_id = _focus_after_close(len(before_ids), len(after_ids), closed_index, order)
+        if focus_id is None and len(after_ids) == 2:
+            # When two panes remain, focus the right pane if no slot match is available.
             if canonical_after and len(canonical_after) == 2:
                 focus_id = canonical_after[1]
             elif geometry_ready(tab, after_ids):
                 geometry_order = order_by_geometry(tab, after_ids)
                 if len(geometry_order) == 2:
                     focus_id = geometry_order[1]
-        elif desired_focus_id is not None and desired_focus_id in after_ids:
-            focus_id = desired_focus_id
         if focus_id is not None:
             try:
                 tab.set_active_window(focus_id)
@@ -296,6 +325,12 @@ def _schedule_normalize_after_close(
                 pass
         # Hyprland/Wayland may skip repaint after close/resize; force a bounce.
         split_repaint_focus_bounce()
+        if focus_id is not None:
+            # Re-assert focus in case the compositor bounce restores a prior window.
+            try:
+                tab.set_active_window(focus_id)
+            except Exception:
+                pass
 
     add_timer(do_normalize, 0.06, False)
 
@@ -370,7 +405,10 @@ def handle_result(
                 order_before = order_by_geometry(tab, before_ids)
             else:
                 order_before = _ensure_order(tab, state, before_ids)
-            desired_focus_id = None
+            closed_index = None
+            if target_window_id in order_before:
+                # Preserve the slot index of the closed pane for focus selection later.
+                closed_index = order_before.index(target_window_id)
             order_after: list[int] | None = None
             if len(before_ids) == 4:
                 # Rotate 4→3 by row-major slot order to preserve the expected progression.
@@ -384,13 +422,7 @@ def handle_result(
                 if slot_order and target_window_id in slot_order:
                     order_before = slot_order
                     order_after = [wid for wid in slot_order if wid != target_window_id]
-            if target_window_id in order_before and len(order_before) > 1:
-                # Focus the next slot in rotation order after the closed window.
-                closed_index = order_before.index(target_window_id)
-                if desired_focus_id is None:
-                    desired_focus_id = order_before[
-                        (closed_index + 1) % len(order_before)
-                    ]
+                    closed_index = slot_order.index(target_window_id)
             # Preserve rotation order by removing the closed id from the slot list.
             if order_after is None:
                 order_after = [wid for wid in order_before if wid != target_window_id]
@@ -402,7 +434,7 @@ def handle_result(
                 before_ids,
                 os_window_id,
                 order_after,
-                desired_focus_id,
+                closed_index,
             )
         elif mode == "close_tab":
             try:
