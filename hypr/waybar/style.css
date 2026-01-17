@@ -4,22 +4,156 @@
 @import url("colors-wallust.css");/* wallust overrides (regenerated per wallpaper) */
 @import url("colors.css");        /* keeps any extra schema values other modules might use */
 
+/* derived helpers: keep wallust-driven accents legible on any wallpaper */
+@define-color halo-strong  alpha(shade(@background, 0.5), 1.0);
+@define-color pill-solid   alpha(shade(@background, 0.6), 0.95);
+@define-color stack-solid  alpha(shade(@background, 0.6), 0.94);
+@define-color pill-outline alpha(mix(@fg, @background, 0.30), 0.85);
+/* Aurora accents keep the palette lively without leaning on magenta-heavy gradients. */
+@define-color aurora-cool  mix(@blue, @cyan, 0.55);
+@define-color aurora-warm  mix(@yellow, @green, 0.55);
+/* Subtle top sheen for glass pills to separate them from the wallpaper. */
+@define-color pill-sheen   alpha(@fg, 0.08);
+/* Right-side control deck: bento layout with matte panels and crisp accents. */
+@define-color rail-base           alpha(mix(@background, @fg, 0.08), 0.78);
+@define-color rail-outline        alpha(mix(@fg, @background, 0.70), 0.55);
+@define-color rail-core           alpha(mix(@aurora-cool, @aurora-warm, 0.55), 0.28);
+@define-color rail-segment        alpha(mix(@background, @fg, 0.14), 0.90);
+@define-color rail-segment-border alpha(mix(@fg, @background, 0.65), 0.40);
+@define-color rail-divider        alpha(mix(@fg, @background, 0.60), 0.22);
+@define-color rail-track          alpha(mix(@background, @fg, 0.05), 0.75);
+@define-color rail-sheen          alpha(@fg, 0.12);
+/* Accent tints stay tied to wallust-driven aurora hues. */
+@define-color stained-cool        alpha(@aurora-cool, 0.10);
+@define-color stained-warm        alpha(@aurora-warm, 0.10);
+@define-color stained-core        alpha(mix(@aurora-cool, @aurora-warm, 0.55), 0.10);
+@define-color stained-sheen       alpha(@fg, 0.06);
+
 /* ——— global */
 * {
   border: none;
   border-radius: 0;
   font-family: "Symbols Nerd Font Mono","Symbols Nerd Font","FiraCode Nerd Font Mono","JetBrainsMono Nerd Font Propo",monospace;
   font-weight: 600;
-  font-size: 14px;
+  /* Base size tuned for at-a-distance legibility. */
+  font-size: 15px;
   min-height: 0;
   color: @fg;
 }
 
 /* ——— bar frame: invisible, floating with gaps */
 window#waybar {
-  background: @bg-clear;          /* wallpaper shows through */
-  margin: 8px 8px 0 8px;          /* match config.jsonc margin */
+  /* Wallpaper shows through by default; effects are layered via `background-image`. */
+  background-color: transparent;
+  /* Starlight background is applied at the window level so it stays visible even when the
+   * `.modules-center` container cannot expand (interaction between `fixed-center` and
+   * `expand-center` differs across Waybar versions/builds).
+   *
+   * The sprite sheet is rendered with transparent edges and scaled to the middle portion only,
+   * so stars stay confined to the visual center area.
+   */
+  background-image: url("assets/starlight_sheet.png");
+  background-repeat: no-repeat;
+  background-position: 47% 0%;
+  /* Starlight strip size:
+   * - Width (%) constrains stars to the visual center span (between the drawer arrows).
+   * - Height (%) must match the sprite sheet frame count: `FRAME_COUNT * 100%` from
+   *   `scripts/generate-starlight-assets.py` (120 frames => 12000%).
+   */
+  /* Wider strip fills the left gap while keeping the right edge aligned. */
+  background-size: 66% 12000%;
+  /* Use discrete stepping to avoid continuous interpolation and reduce redraw load. */
+  animation-name: starlight_twinkle_sheet;
+  /* Step rate tuning:
+   * - Lower duration increases perceived smoothness, but increases redraw frequency.
+   * - Step count must match `FRAME_COUNT - 1` (last frame duplicates first for a seamless loop).
+   */
+  animation-duration: 18.0s;
+  animation-timing-function: steps(119, end);
+  animation-iteration-count: infinite;
+  margin: 6px 8px 0 8px;          /* match config.jsonc margin */
   padding: 0;
+}
+
+/* Starlight (BMW roof / "star headliner") strip.
+ *
+ * Requirements:
+ * - No visible bar backdrop: only stars should render on top of the wallpaper.
+ * - Stars should twinkle without animating modules (text/icons).
+ *
+ * Implementation:
+ * - Apply the effect to `window#waybar` so it remains reliable across Waybar versions where
+ *   `.modules-center` expansion can be affected by `fixed-center` and layout details.
+ * - Use a combined sprite sheet (`assets/starlight_sheet.png`) and animate `background-position`,
+ *   which is an animatable GTK CSS property.
+ * - Frames are stacked vertically to avoid GTK/Cairo size limits hit when scaling very wide
+ *   horizontal sprite sheets across large center spans.
+ * - A single background image is used because GTK may not animate list-valued background properties
+ *   consistently across multiple backgrounds.
+ *
+ * Assets:
+ * - `assets/starlight_sheet.png` (120 frames, vertical; base+twinkle; last frame duplicates first)
+ * - Both are generated by `scripts/generate-starlight-assets.py`.
+ *
+ */
+.modules-center {
+  /* Guard rail: keep the center container transparent so module styles do not accidentally
+   * introduce a visible band behind the starlight.
+   */
+  background-color: transparent;
+  /* Subtle vignette for center focus without introducing a visible bar backdrop. */
+  background-image: radial-gradient(circle at 50% 50%,
+    alpha(@background, 0.26) 0%,
+    alpha(@background, 0.14) 45%,
+    alpha(@background, 0.00) 70%);
+  /* Soft halo to add depth to the center cluster. */
+  box-shadow:
+    0 0 18px alpha(@background, 0.22),
+    0 0 28px alpha(@background, 0.16);
+}
+
+/* Right-side control deck: bento slab with matte texture and hard edges. */
+.modules-right {
+  background-color: @rail-base;
+  /* Texture stack: top sheen, micro-groove, then aurora tint wash. */
+  background-image:
+    linear-gradient(180deg, @stained-sheen 0%, transparent 70%),
+    repeating-linear-gradient(
+      90deg,
+      alpha(@fg, 0.06) 0px,
+      alpha(@fg, 0.06) 1px,
+      transparent 1px,
+      transparent 6px
+    ),
+    linear-gradient(135deg, @stained-cool 0%, @stained-warm 100%);
+  border: 1px solid @rail-outline;
+  border-radius: 14px;
+  /* Deck padding keeps hub and system cards balanced within the slab. */
+  padding: 6px 7px;
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 1px @rail-sheen,
+    inset 0 -1px alpha(@background, 0.30),
+    0 10px 18px alpha(shade(@background, 0.55), 0.50),
+    0 0 0 1px alpha(@rail-core, 0.30);
+}
+
+#custom-center-spacer-left,
+#custom-center-spacer-right {
+  /* Layout-only modules; keep the starlight strip visually clean and avoid accidental pill styles. */
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  border: none;
+  box-shadow: none;
+}
+
+@keyframes starlight_twinkle_sheet {
+  /* 120 vertical frames. The `steps(119, end)` timing function makes the background jump between
+   * frames (no sliding) while avoiding continuous interpolation.
+   */
+  from { background-position: 50% 0%; }
+  to   { background-position: 50% 100%; }
 }
 
 /* tooltips */
@@ -31,13 +165,13 @@ tooltip {
 }
 
 /* ——— “glass pill” base applied to all modules */
-#window,
 #clock,
 #cpu,
 #memory,
 #pulseaudio,
 #backlight,
 #network,
+#bluetooth,
 #battery,
 #tray,
 #custom-hyprland,
@@ -46,25 +180,67 @@ tooltip {
 #custom-updates,
 #custom-arrow-left,
 #custom-arrow-right,
-#mode,
-#submap,
 #custom-mullvad,
 #custom-power {
-  background: @pill;
+  background: @pill-solid;
+  /* Dual-layer glass: a diagonal sheen plus a subtle scanline texture. */
+  background-image:
+    linear-gradient(
+      145deg,
+      alpha(@fg, 0.10) 0%,
+      alpha(@fg, 0.04) 40%,
+      transparent 60%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      alpha(@fg, 0.04) 0px,
+      alpha(@fg, 0.04) 1px,
+      transparent 1px,
+      transparent 2px
+    );
   border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.04);
-  padding: 4px 10px;
-  margin: 4px 6px;
+  border: 1px solid @pill-outline;
+  /* Pill spacing follows the bar density while preserving the glass depth. */
+  padding: 3px 8px;
+  margin: 3px 4px;
+  box-shadow:
+    inset 0 1px @pill-sheen,
+    0 0 0 1px alpha(shade(@background, 0.4), 1.0),
+    0 4px 10px alpha(shade(@background, 0.45), 0.9);
   transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease, transform 160ms ease;
 }
 
-/* center window title can breathe a bit if you use it */
-#window { padding: 4px 14px; }
+/* accent text readability: dark halo plus colored glow tracks currentColor */
+#clock,
+#cpu,
+#memory,
+#pulseaudio,
+#backlight,
+#network,
+#battery,
+#bluetooth,
+#custom-hyprland,
+#custom-notifications,
+#custom-weather,
+#custom-updates,
+#custom-mullvad,
+#custom-power {
+  text-shadow:
+    0 0 2px @halo-strong,
+    0 0 5px @halo-strong,
+    0 0 6px alpha(currentColor, 0.90),
+    0 0 12px alpha(currentColor, 0.90);
+}
+
+/* Optional modules (window/mode/submap) are not configured; selectors are omitted to avoid drift. */
 
 /* ——— clock */
 #clock {
-    padding-left: 16px;
-    padding-right: 16px;
+    /* Clock padding aligns with the center pill geometry. */
+    padding: 6px 15px;
+    margin: 4px 4px;
+    /* Clock size stays aligned with the original scale. */
+    font-size: 16px;
     border-radius: 5px 5px 20px 20px;
     border: solid 3px;
     border-color: @clock-border;
@@ -80,16 +256,36 @@ tooltip {
 
 
 /* ——— meters & status */
-#cpu, #memory { color: @cyan; }
-#cpu.warning { color: @yellow; }
-#cpu.critical { color: @red; }
-#backlight   { color: @yellow; }
-#network     { color: @magenta; }
+/* accent colors mix with @fg so hue follows wallust but keeps high luminance */
+#cpu, #memory {
+  color: mix(@fg, @cyan, 0.75);
+}
+
+/* Metrics spacing matches clock height for distance readability. */
+#custom-updates,
+#cpu,
+#memory {
+  min-width: 0;
+  /* Vertical padding keeps the drawer pills aligned with the clock. */
+  padding: 5px 12px;
+  margin: 0 3px;
+  border-radius: 999px;
+}
+#cpu.warning { color: mix(@fg, @yellow, 0.75); }
+#cpu.critical { color: mix(@fg, @red, 0.75); }
+#backlight {
+  color: mix(@fg, @yellow, 0.75);
+}
+#network {
+  color: mix(@fg, @magenta, 0.75);
+}
 #network.disconnected { opacity: 0.6; }
 
-#battery     { color: @green; }
-#battery.warning  { color: @yellow; }
-#battery.critical { color: @red; }
+#battery {
+  color: mix(@fg, @green, 0.75);
+}
+#battery.warning  { color: mix(@fg, @yellow, 0.75); }
+#battery.critical { color: mix(@fg, @red, 0.75); }
 #battery.critical:not(.charging) {
   animation: blink 1s linear infinite alternate;
 }
@@ -97,54 +293,109 @@ tooltip {
 
 /* audio module pill */
 #pulseaudio {
-  color: @blue;
+  color: mix(@fg, @blue, 0.75);
   border-radius: 10px;
 }
-#pulseaudio.muted { color: @red; }
+#pulseaudio.muted { color: mix(@fg, @red, 0.75); }
 
 /* bluetooth “showcase” */
-#bluetooth { color: @magenta; }
+#bluetooth { color: mix(@fg, @magenta, 0.75); }
 
 #custom-hyprland {
-  color: @blue;
+  color: mix(@fg, @blue, 0.75);
   font-weight: 700;
+  /* Anchor pill height matches the right deck chip sizing. */
+  padding: 5px 12px;
+  margin: 3px 5px;
+  border-width: 2px;
 }
 
-#custom-notifications { color: @magenta; }
-#custom-notifications.notification { color: @yellow; }
+#custom-notifications { color: mix(@fg, @magenta, 0.75); }
+#custom-notifications.notification { color: mix(@fg, @yellow, 0.75); }
 #custom-notifications.dnd-none,
 #custom-notifications.dnd-inhibited-none { opacity: 0.75; }
-#custom-notifications.unread { color: @yellow; }
-#custom-notifications.dnd { color: @magenta; }
+#custom-notifications.unread { color: mix(@fg, @yellow, 0.75); }
+#custom-notifications.dnd { color: mix(@fg, @magenta, 0.75); }
 
-#custom-weather { color: @blue; }
+#custom-weather { color: mix(@fg, @blue, 0.75); }
 
-#custom-updates { color: @yellow; }
+#custom-updates { color: mix(@fg, @yellow, 0.75); }
 
 #group-info {
-  background: transparent;
-  padding: 0;
-  margin-left: 8px;
+  background-color: alpha(@background, 0.14);
+  background-image: linear-gradient(
+    180deg,
+    alpha(@fg, 0.06) 0%,
+    transparent 70%
+  );
+  /* Inner padding keeps the drawer contents aligned to clock height. */
+  padding: 2px;
+  /* Group offset aligns the left cluster with adjacent modules. */
+  margin-left: 6px;
+  /* Subtle separation glow for the left drawer cluster. */
+  box-shadow: 0 0 12px alpha(@halo-strong, 0.18);
+  border: 1px solid alpha(@pill-outline, 0.35);
+  border-radius: 999px;
 }
 
 #custom-arrow-right,
 #custom-arrow-left {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 2px 8px;
-  margin: 0 4px;
-  font-size: 18px;
+  /* Drawer handles: add a quiet capsule so chevrons read as interactive controls. */
+  background: alpha(@pill-solid, 0.75);
+  border: 1px solid alpha(@pill-outline, 0.85);
+  box-shadow:
+    inset 0 1px @pill-sheen,
+    0 2px 6px alpha(shade(@background, 0.45), 0.9);
+  /* Chevron padding matches the right deck chip height. */
+  padding: 4px 8px;
+  margin: 0 3px;
+  font-size: 16px;
   color: @fg;
+  /* keep drawer chevrons legible even on noisy or bright wallpapers */
+  font-weight: 800;
+  text-shadow:
+    0 0 2px @halo-strong,
+    0 0 5px @halo-strong,
+    0 0 8px alpha(currentColor, 0.90);
 }
-#custom-arrow-right { color: @blue; }
-#custom-arrow-left { color: @magenta; }
+#custom-arrow-right { color: mix(@fg, @aurora-cool, 0.60); }
+#custom-arrow-left { color: mix(@fg, @aurora-warm, 0.60); }
 
-#group-hub {
-  background: transparent;
-  padding: 0;
+#group-info #custom-arrow-right {
+  /* Left drawer chevron matches the right deck chevron size. */
+  padding: 5px 10px;
+  margin: 0 4px;
+  border-radius: 8px;
 }
 
+/* Hub and system cards: framed tracks inside the deck. */
+#group-hub,
+#group-system {
+  background-color: @rail-track;
+  /* Card sheen keeps edge definition without heavy gloss. */
+  background-image: linear-gradient(180deg, alpha(@fg, 0.10) 0%, transparent 70%);
+  border: 1px solid @rail-segment-border;
+  border-radius: 10px;
+  /* Card padding creates a thin bezel around each chip. */
+  padding: 3px;
+  margin: 0;
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 1px @rail-sheen,
+    inset 0 -1px alpha(@background, 0.35);
+}
+
+/* Divider notch separates hub and system cards within the deck. */
+#group-system {
+  margin-left: 7px;
+  padding-left: 7px;
+  box-shadow:
+    inset 1px 0 @rail-divider,
+    inset 0 1px @rail-sheen,
+    inset 0 -1px alpha(@background, 0.35);
+}
+
+/* drawer children */
 .drawer-hidden {
   padding: 0;
   margin: 0;
@@ -153,39 +404,157 @@ tooltip {
   box-shadow: none;
 }
 
-/* mullvad state colors (your script sets classes) */
-#custom-mullvad.connected    { color: @green; }
-#custom-mullvad.disconnected { color: @red; }
+/* Right stack fallback styling when modules are not placed inside segmented rails. */
+#custom-power,
+#tray,
+#battery {
+  background: @stack-solid;
+  /* Glass bevel for the right stack: top sheen + fine scanlines. */
+  background-image:
+    linear-gradient(
+      180deg,
+      alpha(@fg, 0.10) 0%,
+      transparent 55%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      alpha(@fg, 0.03) 0px,
+      alpha(@fg, 0.03) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+  border-radius: 999px;
+  border: 1px solid alpha(@clock-border, 0.95);
+
+  padding: 0 9px;
+  margin: 0 2px;
+
+  font-weight: 800;
+  letter-spacing: 0.02em;
+
+}
+
+/* stack-text tint only applies to modules without dedicated palette tokens */
+#custom-power,
+#tray {
+  color: mix(@fg, @stack-text, 0.75);
+}
+
+/* VPN label fallback styling when the rail overrides are not active. */
 #custom-mullvad {
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255,255,255,0.08);
-  color: @fg;
-  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.28);
+  background: @stack-solid;
+  /* Glass bevel for the VPN pill: consistent with right stack styling. */
+  background-image:
+    linear-gradient(
+      180deg,
+      alpha(@fg, 0.10) 0%,
+      transparent 55%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      alpha(@fg, 0.03) 0px,
+      alpha(@fg, 0.03) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+  border-radius: 999px;
+  border: 1px solid alpha(@clock-border, 0.95);
+
+  padding: 0 9px;
+  margin: 0 2px;
+
+  color: mix(@fg, @vpn-text, 0.75);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+
+  text-shadow:
+    0 0 2px @halo-strong,
+    0 0 5px @halo-strong,
+    0 0 6px alpha(@vpn-text, 0.92),
+    0 0 12px alpha(@vpn-text, 0.92);
 }
 
-/* boost legibility for network + brightness badges on bright wallpapers */
+/* VPN state fallback styling for non-rail placement. */
+#custom-mullvad.connected {
+  border-color: @green;
+  text-shadow:
+    0 0 2px @halo-strong,
+    0 0 5px @halo-strong,
+    0 0 6px alpha(@green, 0.92),
+    0 0 12px alpha(@green, 0.92);
+}
+
+#custom-mullvad.disconnected {
+  border-color: @red;
+  text-shadow:
+    0 0 2px @halo-strong,
+    0 0 5px @halo-strong,
+    0 0 6px alpha(@red, 0.92),
+    0 0 12px alpha(@red, 0.92);
+}
+
+/* SSID / wifi icon / bluetooth icon / volume / brightness: fallback pill style outside segmented rails. */
 #network,
+#bluetooth,
+#pulseaudio,
 #backlight {
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255,255,255,0.06);
-  text-shadow: 0 1px 6px rgba(0,0,0,0.55);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.24);
-}
-#network { color: @magenta; }
-#backlight { color: @yellow; }
+  background: @stack-solid;
+  /* Glass bevel for icon pills: matches the right stack sheen. */
+  background-image:
+    linear-gradient(
+      180deg,
+      alpha(@fg, 0.10) 0%,
+      transparent 55%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      alpha(@fg, 0.03) 0px,
+      alpha(@fg, 0.03) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+  border-radius: 999px;
+  border: 1px solid alpha(@clock-border, 0.95);
 
-/* tray */
+  padding: 0 9px;
+  margin: 0 2px;
+
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* SSID pill uses extra width for readability. */
+#network.ssid { padding: 0 12px; }
+
+/* Tray icons: keep crisp outside segmented rails. */
+#tray * {
+  text-shadow:
+    0 0 1px alpha(@neon-text-core, 0.8),
+    0 0 3px @neon-glow-a;
+  box-shadow: none;
+}
+
+/* Secondary modules use a softer glow outside segmented rails. */
+#tray,
+#backlight,
+#bluetooth,
+#network {
+  text-shadow:
+    0 0 1px alpha(@halo-strong, 0.70),
+    0 0 3px alpha(currentColor, 0.55);
+}
+
+/* tray (fallback) */
 #tray { padding: 2px 8px; }
 #tray > .passive { opacity: 0.7; }
 #tray > .needs-attention {
   background: @red; color: #191622; border-radius: 6px;
 }
 
-/* extra rounding on the right stack */
+/* Extra rounding on the right stack for non-rail usage. */
 #custom-mullvad,
 #network,
-#cpu,
+#bluetooth,
 #pulseaudio,
 #backlight,
 #battery,
@@ -195,14 +564,14 @@ tooltip {
 #custom-updates,
 #custom-power {
   border-radius: 999px;
-  padding: 3px 8px;
-  margin: 1px 1px;
+  padding: 0 9px;
+  margin: 0 2px;
 }
 
-/* tighten right stack spacing */
+/* Subtle dividers on the right stack for non-rail usage. */
 #custom-mullvad,
 #network,
-#cpu,
+#bluetooth,
 #pulseaudio,
 #backlight,
 #battery,
@@ -210,92 +579,229 @@ tooltip {
 #custom-weather,
 #custom-updates,
 #custom-power {
-  padding: 3px 8px;
-  margin: 1px 1px;
-}
-#tray {
-  padding: 2px 8px;
-  margin: 1px 1px;
+  box-shadow:
+    inset -1px 0 rgba(255,255,255,0.05),
+    0 0 4px @halo-strong,
+    0 0 10px alpha(@halo-strong, 0.65);
 }
 
-/* subtle dividers on the right stack */
-#custom-mullvad,
-#network,
-#cpu,
-#pulseaudio,
-#backlight,
-#battery,
-#custom-notifications,
-#custom-weather,
-#custom-updates,
-#custom-power {
-  box-shadow: inset -1px 0 rgba(255,255,255,0.05);
+/* Right-side chips: bento tiles with accent rails for quick scanning. */
+#group-hub #custom-arrow-left,
+#group-hub #custom-weather,
+#group-hub #battery,
+#group-system #custom-notifications,
+#group-system #custom-mullvad,
+#group-system #pulseaudio,
+#group-system #backlight,
+#group-system #network,
+#group-system #bluetooth,
+#group-system #tray,
+#group-system #custom-power {
+  background: @rail-segment;
+  /* Chip finish: top sheen plus a focused core highlight. */
+  background-image:
+    linear-gradient(180deg, @stained-sheen 0%, transparent 70%),
+    radial-gradient(circle at 50% 0%, @stained-core 0%, transparent 70%);
+  border: 1px solid @rail-segment-border;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  /* Chip padding and margin keep the deck aligned to clock height. */
+  padding: 5px 12px;
+  margin: 0 4px;
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 1px @rail-sheen,
+    inset 0 -1px alpha(@background, 0.35);
+  color: alpha(@fg, 0.92);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 1px alpha(@background, 0.70);
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
-/* neon rim + lift on hover for major modules */
-#window:hover,
-#cpu:hover,
-#memory:hover,
-#pulseaudio:hover,
-#backlight:hover,
-#network:hover,
-#battery:hover,
-#tray:hover,
-#custom-hyprland:hover,
-#custom-notifications:hover,
-#custom-weather:hover,
-#custom-updates:hover,
-#mode:hover,
-#submap:hover,
-#custom-mullvad:hover,
-#custom-power:hover {
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent; /* outline only */
-  border-image: linear-gradient(135deg, @blue, @magenta) 1;
-  border-image-slice: 1;
-  box-shadow: 0 6px 14px rgba(0,0,0,0.20);
+/* Accent rails: per-module tint for fast recognition. */
+#group-hub #custom-arrow-left { border-left-color: alpha(@aurora-warm, 0.70); }
+#group-hub #custom-weather   { border-left-color: alpha(@blue, 0.70); }
+#group-hub #battery          { border-left-color: alpha(@green, 0.70); }
+
+#group-system #custom-notifications { border-left-color: alpha(@aurora-cool, 0.70); }
+#group-system #custom-mullvad       { border-left-color: alpha(@vpn-text, 0.70); }
+#group-system #pulseaudio           { border-left-color: alpha(@blue, 0.70); }
+#group-system #backlight            { border-left-color: alpha(@yellow, 0.70); }
+#group-system #network              { border-left-color: alpha(@cyan, 0.70); }
+#group-system #bluetooth            { border-left-color: alpha(@magenta, 0.70); }
+#group-system #tray                 { border-left-color: alpha(@fg, 0.40); }
+#group-system #custom-power         { border-left-color: alpha(@aurora-warm, 0.70); }
+
+/* Hub chevron: tab button with stronger edge definition. */
+#group-hub #custom-arrow-left {
+  background-color: mix(@rail-segment, @rail-core, 0.30);
+  border-color: alpha(@rail-core, 0.45);
+  font-size: 16px;
+  font-weight: 700;
+  padding: 5px 10px;
+  color: mix(@fg, @aurora-warm, 0.70);
+}
+
+/* Hub tiles use padding suited to weather and battery labels. */
+#group-hub #custom-weather,
+#group-hub #battery {
+  padding: 5px 13px;
+}
+
+/* Mullvad chip spacing preserves label legibility. */
+#group-system #custom-mullvad {
+  padding: 5px 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* Tray chip padding aligns icons with adjacent glyphs. */
+#group-system #tray {
+  padding: 4px 8px;
+}
+#group-system #tray * {
+  text-shadow: none;
+}
+
+/* Bluetooth glyph weight: slight boost for optical balance. */
+#group-system #bluetooth {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* Power chip: warm accent to close the deck. */
+#group-system #custom-power {
+  background-color: mix(@rail-segment, @aurora-warm, 0.18);
+  border-color: alpha(@aurora-warm, 0.40);
+  color: mix(@fg, @aurora-warm, 0.75);
+}
+
+/* Notification activity: cool accent without overpowering the deck. */
+#group-system #custom-notifications.notification,
+#group-system #custom-notifications.unread {
+  background-color: alpha(@aurora-cool, 0.16);
+  border-color: alpha(@aurora-cool, 0.40);
+  border-left-color: alpha(@aurora-cool, 0.80);
+  color: mix(@fg, @aurora-cool, 0.85);
+}
+
+/* Audio state: muted status uses a restrained alert tint. */
+#group-system #pulseaudio.muted {
+  background-color: alpha(@red, 0.14);
+  border-color: alpha(@red, 0.35);
+  border-left-color: alpha(@red, 0.75);
+  color: mix(@fg, @red, 0.70);
+}
+
+/* VPN state: border and accent rail communicate connectivity. */
+#group-system #custom-mullvad.connected {
+  border-color: alpha(@green, 0.35);
+  border-left-color: alpha(@green, 0.75);
+  color: mix(@fg, @green, 0.70);
+}
+#group-system #custom-mullvad.disconnected {
+  border-color: alpha(@red, 0.35);
+  border-left-color: alpha(@red, 0.75);
+  color: mix(@fg, @red, 0.70);
+}
+
+/* Battery alerts: reserve color for warning and critical states. */
+#group-hub #battery.warning {
+  border-color: alpha(@yellow, 0.35);
+  border-left-color: alpha(@yellow, 0.80);
+  color: mix(@fg, @yellow, 0.70);
+}
+#group-hub #battery.critical {
+  border-color: alpha(@red, 0.35);
+  border-left-color: alpha(@red, 0.80);
+  color: mix(@fg, @red, 0.70);
+}
+
+/* Network state: disconnected signal is intentionally muted. */
+#group-system #network.disconnected {
+  color: alpha(@fg, 0.55);
+  border-left-color: alpha(@fg, 0.35);
 }
 
 /* === Workspaces: thin neon outline instead of full fill === */
 #workspaces {
-  background: transparent;   /* no glass chip behind the group */
-  padding: 0 4px;
-  margin: 0;                 /* sits flush on the left like your screenshot */
-  border-radius: 0;
+  /* Segmented-control track keeps inactive states readable on noisy wallpapers. */
+  background-image: linear-gradient(
+    180deg,
+    alpha(@fg, 0.10) 0%,
+    alpha(@background, 0.18) 60%
+  );
+  background-color: alpha(@background, 0.30);
+  border: 1px solid alpha(@pill-outline, 0.55);
+  /* Workspace rail padding matches the right deck chip height. */
+  padding: 3px 5px;
+  margin: 0;
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px alpha(@fg, 0.08),
+    0 2px 10px alpha(shade(@background, 0.5), 0.7);
 }
 
 #workspaces button {
-  color: @fg-muted;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  color: alpha(@fg, 0.72);
+  background-color: alpha(@background, 0.25);
+  background-image: linear-gradient(
+    180deg,
+    alpha(@fg, 0.08) 0%,
+    transparent 60%
+  );
+  border: 1px solid alpha(@pill-outline, 0.40);
+  border-radius: 12px;
+  /* Taller buttons match the right deck chip height. */
   padding: 5px 12px;
-  margin: 0 4px;
+  margin: 0 3px;
   transition: all 180ms ease;
+  box-shadow:
+    inset 0 1px alpha(@fg, 0.10),
+    inset 0 -1px alpha(@fg, 0.06),
+    0 2px 6px alpha(shade(@background, 0.5), 0.45);
 }
 
 #workspaces button:hover {
   color: @fg;
   border-color: transparent;
-  border-image: linear-gradient(135deg, @blue, @magenta) 1;
-  background: linear-gradient(135deg, rgba(122,162,247,0.10), rgba(187,154,247,0.10));
+  border-image: linear-gradient(135deg, @aurora-cool, @aurora-warm) 1;
+  background: linear-gradient(135deg, alpha(@aurora-cool, 0.18), alpha(@aurora-warm, 0.16));
+  background-image: radial-gradient(
+    circle at 50% 25%,
+    alpha(@aurora-cool, 0.20) 0%,
+    transparent 65%
+  );
   box-shadow:
-    0 0 0 2px rgba(122,162,247,0.18),
-    0 0 0 4px rgba(187,154,247,0.12),
+    0 0 0 2px alpha(@aurora-cool, 0.24),
+    0 0 0 4px alpha(@aurora-warm, 0.18),
     0 4px 12px rgba(0,0,0,0.22);
 }
 
 #workspaces button.active,
 #workspaces button.focused {
   color: @fg;
-  background: linear-gradient(135deg, rgba(122,162,247,0.16), rgba(187,154,247,0.16));
+  background: linear-gradient(135deg, alpha(@aurora-cool, 0.32), alpha(@aurora-warm, 0.30));
+  background-image:
+    radial-gradient(
+      circle at 50% 15%,
+      alpha(@aurora-cool, 0.40) 0%,
+      transparent 65%
+    ),
+    linear-gradient(
+      180deg,
+      alpha(@fg, 0.12) 0%,
+      transparent 60%
+    );
   border-color: transparent;
-  border-image: linear-gradient(135deg, @blue, @magenta) 1;
+  border-image: linear-gradient(135deg, @aurora-cool, @aurora-warm) 1;
   box-shadow:
-    0 0 0 2px rgba(122,162,247,0.22),
-    0 0 0 4px rgba(187,154,247,0.14),
-    0 4px 14px rgba(0,0,0,0.25);
+    inset 0 -2px alpha(@aurora-warm, 0.55),
+    inset 0 1px alpha(@fg, 0.18),
+    0 0 0 2px alpha(@aurora-cool, 0.38),
+    0 0 0 4px alpha(@aurora-warm, 0.28),
+    0 8px 18px rgba(0,0,0,0.32);
   letter-spacing: 0.25px;
 }
 

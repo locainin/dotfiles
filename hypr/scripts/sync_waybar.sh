@@ -18,7 +18,7 @@ fi
 mkdir -p "$HOME/.config"
 if [[ -d "$dst" && ! -L "$dst" ]]; then
   ts=$(date +%Y%m%d-%H%M%S)
-  mv "$dst"{"",.backup.$ts}
+  mv "$dst"{"",.backup."$ts"}
 fi
 
 mkdir -p "$dst"

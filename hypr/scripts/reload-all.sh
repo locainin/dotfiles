@@ -18,7 +18,7 @@ fi
 # brief pause to let Hyprland apply changes
 sleep 0.15
 
-# 2) restart panels/daemons you actually use
+# 2) restart panels/daemons in use
 pkill -x quickshell 2>/dev/null || true
 if [ -x "$HOME/.config/hypr/scripts/start-waybar.sh" ]; then
   "$HOME/.config/hypr/scripts/start-waybar.sh" --restart
@@ -41,7 +41,7 @@ if have vicinae; then
   vicinae server --replace >/dev/null 2>&1 || true
 fi
 
-# 4) optional notify so you see when reload is done
+# 4) optional notify to confirm completion
 if have notify-send; then
   notify-send --expire-time=2500 --urgency=low \
     --hint=string:x-canonical-private-synchronous:hypr-reload \

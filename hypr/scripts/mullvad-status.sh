@@ -1,9 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Mullvad status + control helper for Waybar custom/mullvad
-# - prints JSON with text/class/tooltip to drive the widget
-# - supports click actions for launch and connect/disconnect
+# Label toggles for the connected line.
+# Shows the country portion of the location. Comment out to disable.
+
+#show_country=1
+
+# Shows the city portion of the location. Comment out to disable.
+
+#show_city=1
+
+# Shows the state or region portion of the location. Comment out to disable.
+
+#show_state=1
+
+# Shows the lock glyph. Comment out to disable.
+
+show_lock=1
+
+# feeds Waybar custom/mullvad plus click actions in config.jsonc to launch/toggle Mullvad quickly
 
 timeout_tool="${TIMEOUT_BIN:-timeout}"
 
@@ -37,13 +52,13 @@ launch_gui() {
     fi
 
     # clean restart the GUI if it’s already running
-    if pgrep -f mullvad-gui >/dev/null 2>&1; then
+    if pgrep -x mullvad-gui >/dev/null 2>&1 || pgrep -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1; then
       printf '[%s] mullvad-gui already running, restarting\n' "$(date +%F' '%T)"
-      pkill -f mullvad-gui >/dev/null 2>&1 || true
-      for _ in $(seq 1 20); do pgrep -f mullvad-gui >/dev/null 2>&1 || break; sleep 0.1; done
-      if pgrep -f mullvad-gui >/dev/null 2>&1; then
-        pkill -KILL -f mullvad-gui >/dev/null 2>&1 || true
-        for _ in $(seq 1 10); do pgrep -f mullvad-gui >/dev/null 2>&1 || break; sleep 0.1; done
+      pkill -x mullvad-gui >/dev/null 2>&1 || pkill -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1 || true
+      for _ in $(seq 1 20); do pgrep -x mullvad-gui >/dev/null 2>&1 || pgrep -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1 || break; sleep 0.1; done
+      if pgrep -x mullvad-gui >/dev/null 2>&1 || pgrep -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1; then
+        pkill -KILL -x mullvad-gui >/dev/null 2>&1 || pkill -KILL -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1 || true
+        for _ in $(seq 1 10); do pgrep -x mullvad-gui >/dev/null 2>&1 || pgrep -f "/opt/Mullvad VPN/mullvad-gui" >/dev/null 2>&1 || break; sleep 0.1; done
       fi
     fi
 
@@ -100,6 +115,11 @@ sanitize_status() {
   printf '%s' "$1" | sed -E 's/[0-9]{1,3}(\.[0-9]{1,3}){3}//g; s/IPv[0-9]+:[[:space:]]*//g; s/[[:space:]]{2,}/ /g'
 }
 
+trim_ws() {
+  # Normalizes labels for consistent formatting.
+  printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
 visible_location_from_status() {
   local s="$1" line loc
   if line=$(printf '%s\n' "$s" | grep -i 'Visible location'); then
@@ -128,6 +148,46 @@ visible_location_from_status() {
   else
     printf '%s' "$loc"
   fi
+}
+
+format_location() {
+  # Formats the location segment based on the toggles.
+  local loc="$1"
+  local country city region out
+
+  IFS=',' read -r country city region <<< "$loc"
+
+  country="$(trim_ws "$country")"
+  city="$(trim_ws "$city")"
+  region="$(trim_ws "$region")"
+
+  out=""
+
+  if [[ "${show_country:-0}" == "1" && -n "$country" ]]; then
+    out="$country"
+  fi
+
+  if [[ "${show_city:-0}" == "1" && -n "$city" ]]; then
+    if [[ -n "$out" ]]; then
+      out="$out, $city"
+    else
+      out="$city"
+    fi
+  fi
+
+  if [[ "${show_state:-0}" == "1" && -n "$region" ]]; then
+    if [[ -n "$out" ]]; then
+      out="$out, $region"
+    else
+      out="$region"
+    fi
+  fi
+
+  if [[ -z "$out" && -n "$loc" && ( "${show_city:-0}" == "1" || "${show_state:-0}" == "1" ) ]]; then
+    out="$loc"
+  fi
+
+  printf '%s' "$out"
 }
 
 notify() {
@@ -164,8 +224,16 @@ if [[ -z "$status_raw" ]]; then
 fi
 
 if echo "$status_raw" | grep -qi '^Connected'; then
-  loc="$(visible_location_from_status "$status_raw")"
-  json " $loc" "connected" "$(sanitize_status "$status_raw")"
+  loc_display="Connected"
+  if [[ "${show_country:-0}" == "1" || "${show_city:-0}" == "1" || "${show_state:-0}" == "1" ]]; then
+    loc="$(visible_location_from_status "$status_raw")"
+    loc_display="$(format_location "$loc")"
+    [[ -z "$loc_display" ]] && loc_display="Connected"
+  fi
+  if [[ "${show_lock:-0}" == "1" ]]; then
+    loc_display=" $loc_display"
+  fi
+  json "$loc_display" "connected" "$(sanitize_status "$status_raw")"
 elif echo "$status_raw" | grep -qi 'Connecting\|Reconnecting'; then
   json "󰇚 Connecting…" "connecting" "$(sanitize_status "$status_raw")"
 else

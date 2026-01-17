@@ -9,6 +9,16 @@
 @define-color clock-bg     rgba(45,25,80,0.35);
 @define-color clock-hover  rgba(90,60,150,0.45);
 @define-color clock-text   #efe9ff;
+@define-color neon-glow-a  rgba(122,162,247,0.90);
+@define-color neon-glow-b  rgba(187,154,247,0.82);
+@define-color neon-glow-c  #ffffff;
+@define-color neon-text-core #fdfcff;
+@define-color neon-chip-bg rgba(5,7,12,0.88);
+@define-color vpn-text #ffb9a0;
+@define-color vpn-glow #ffd7c4;
+@define-color stack-bg rgba(10,10,12,0.55);
+@define-color stack-text #fff0ff;
+@define-color stack-glow #fff7ff;
 
 @define-color blue         #7aa2f7;
 @define-color magenta      #bb9af7;

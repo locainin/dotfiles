@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# brightness helper shared between Hyprland keybinds and Waybar backlight module
-# - keeps keyboard brightness keys and Waybar scroll actions in sync
+# shared by binds.conf brightness keys and waybar/config.jsonc backlight scroll actions so both paths stay in sync
+# device auto-detection keeps the script portable across intel/amdgpu/acpi drivers; override with BRIGHTNESS_DEVICE when needed
+detect_device() {
+  if command -v brightnessctl >/dev/null 2>&1; then
+    # brightnessctl -l prints: Device 'intel_backlight' of class backlight:
+    local candidate
+    candidate=$(brightnessctl -l 2>/dev/null | awk -F"'" '/class backlight/ {print $2; exit}')
+    if [[ -n "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  fi
+  if compgen -G "/sys/class/backlight/*" >/dev/null 2>&1; then
+    basename /sys/class/backlight/* | head -n1
+    return
+  fi
+  printf '%s\n' "intel_backlight"
+}
 
-dev="${BRIGHTNESS_DEVICE:-intel_backlight}"
+dev="${BRIGHTNESS_DEVICE:-$(detect_device)}"
 op="${1:-up}"
 step="${2:-5}"
 
 [[ "$step" =~ ^[0-9]+$ ]] || { echo "invalid step: $step" >&2; exit 2; }
 
-sys="/sys/class/backlight/$dev"   # backlight device sysfs path
+sys="/sys/class/backlight/$dev"
 [[ -r "$sys/brightness" && -r "$sys/max_brightness" ]] || { echo "no backlight device: $dev" >&2; exit 1; }
+if ! command -v brightnessctl >/dev/null 2>&1 && [[ ! -w "$sys/brightness" ]]; then
+  echo "brightnessctl missing and $sys/brightness not writable" >&2
+  exit 1
+fi
 
 cur=$(<"$sys/brightness")
 max=$(<"$sys/max_brightness")

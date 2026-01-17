@@ -10,35 +10,45 @@
   "gtk-layer-shell": true,
 
   // base look/feel
-  "height": 30,
+  // Height tracks the padded module stack for distance readability.
+  "height": 48,
   "spacing": 0,
+  // Center block behavior:
+  // - `fixed-center: true` keeps the clock visually centered on the output
+  // - `expand-center: true` allows the `.modules-center` container to fill the available span,
+  //   which keeps the center layout stable when the left/right drawers expand/collapse
   "fixed-center": true,
+  "expand-center": true,
+  // Disable live CSS reload in steady-state to reduce filesystem watch overhead.
+  "reload_style_on_change": false,
   "hide-empty-modules": false,
-  "margin": "8 8 0 8",
+  // Margin aligns with `window#waybar` so the bar offset stays consistent.
+  "margin": "6 8 0 8",
 
   // core module layout
-  // - left: Hypr toggle + workspaces + title + info drawer
+  // - left: Hypr toggle + workspaces + info drawer
   // - center: clock
-  // - right: hub drawer + notifications + system status + power
+  // - right: hub drawer + system status rail + power
 
   "modules-left": [
     "custom/hyprland",
     "hyprland/workspaces",
-    "hyprland/window",
     "group/info"
   ],
   "modules-center": [
-    "clock"
+    // Center spacers:
+    // - Ensure the clock stays visually centered while `expand-center` allows `.modules-center`
+    //   to fill the available middle span.
+    // - Starlight is applied at `window#waybar` (CSS) and constrained via `background-size`;
+    //   these spacers keep the clock centered without needing layout hacks in CSS.
+    "custom/center-spacer-left",
+    "clock",
+    "custom/center-spacer-right"
   ],
   "modules-right": [
     "group/hub",
-    "custom/notifications",
-    "custom/mullvad",
-    "network",
-    "pulseaudio",
-    "backlight",
-    "tray",
-    "custom/power"
+    // System status rail groups the right stack for unified styling.
+    "group/system"
   ],
 
   // Hypr icon reuses scripts/vicinae-toggle.sh so Waybar clicks match Super tap behavior
@@ -54,20 +64,13 @@
   "hyprland/workspaces": {
     "sort-by": "number",
     "persistent-workspaces": {
-      "eDP-1": [1, 2, 3, 4, 5]
+      "*": 5
     },
     "format": "{id}",
     "on-click": "activate"
   },
 
-  "hyprland/window": {
-    "format": "{}",
-    "max-length": 60
-  },
-
-  // collapsible system info drawer
-  // - click arrow to reveal updates + cpu + memory
-  // - scripts/pacman-updates.sh drives custom/updates signal refresh
+  // collapsible system info drawer; scripts/pacman-updates.sh drives custom/updates signal refresh
   "group/info": {
     "orientation": "horizontal",
     "drawer": {
@@ -92,38 +95,60 @@
   // pacman status helper script
   // - lives in scripts/pacman-updates.sh; path uses $HOME for portability
   // - returns JSON with text/tooltip/class for custom/updates
+  // - left-click opens a wallust-themed GTK3 window with a scrollable diff of packages (no yad/zenity fallbacks)
   "custom/updates": {
     "format": "{}",
     "return-type": "json",
     "exec": "$HOME/.config/hypr/scripts/pacman-updates.sh",
+    // left-click: launch the riced GTK3 diff window implemented in scripts/pacman-updates.sh
+    "on-click": "$HOME/.config/hypr/scripts/pacman-updates.sh --popup",
     "interval": 600,
     "signal": 12,
     "tooltip": true
   },
 
   "cpu": {
-    "interval": 3,
+    // Slightly slower polling reduces idle CPU without sacrificing responsiveness.
+    "interval": 8,
     "format": " {usage}%",
     "tooltip": true,
     "states": { "warning": 70, "critical": 90 }
   },
 
   "memory": {
-    "interval": 5,
+    // Memory utilization changes slowly; lower poll rate avoids unnecessary wakeups.
+    "interval": 15,
     "format": " {percentage}%",
     "states": { "warning": 75, "critical": 90 },
     "tooltip-format": "{used:0.1f}G / {total:0.1f}G ({percentage}%)"
   },
 
+  // Center spacers (Waybar custom modules)
+  // - Must exist so the clock remains centered when `expand-center` is enabled.
+  // - `expand: true` makes each spacer consume equal flexible space.
+  // - Output is intentionally empty; module exists only for layout.
+  "custom/center-spacer-left": {
+    "exec": "printf ''",
+    "interval": 86400,
+    "tooltip": false,
+    "expand": true
+  },
+  "custom/center-spacer-right": {
+    "exec": "printf ''",
+    "interval": 86400,
+    "tooltip": false,
+    "expand": true
+  },
+
   // center clock in friendly day / date / time format
   "clock": {
     "interval": 60,
+    // Clock separators keep the label readable and consistent.
     "format": "{0:%a  |  %d %b  |  %I:%M %p}",
     "tooltip": false
   },
 
-  // right-side drawer
-  // - weather + battery match the power menu + scripts/weather.sh output
+  // right-side drawer; weather + battery stay hidden until the hub chevron is clicked.
   "group/hub": {
     "orientation": "horizontal",
     "drawer": {
@@ -145,27 +170,42 @@
   },
 
   // wttr.in poller backing the weather tile
-  // - scripts/weather.sh reads $WAYBAR_WEATHER_LOCATION so no city is hardcoded
+  // - scripts/weather.py reads $WAYBAR_WEATHER_LOCATION so no city is hardcoded
   // - path uses $HOME for portability
   "custom/weather": {
     "format": "{}",
     "return-type": "json",
-    "exec": "$HOME/.config/hypr/scripts/weather.sh",
+    "exec": "$HOME/.config/hypr/scripts/weather.py",
     "interval": 900,
     "tooltip": false
   },
 
   // simple battery block sharing state with the power menu
   "battery": {
-    "interval": 10,
+    "interval": 30,
     "states": { "good": 70, "warning": 30, "critical": 15 },
     "format": "{icon} {capacity}%",
     "format-charging": " {capacity}%",
     "format-plugged": " {capacity}%",
     "format-icons": ["", "", "", "", ""],
-    "tooltip-format": "Capacity: {capacity}%
-Power: {power}W
-Time: {timeTo}"
+    "tooltip-format": "Capacity: {capacity}%\nPower: {power}W\nTime: {timeTo}"
+  },
+
+  // right-side system rail; keeps the module order unchanged while enabling a shared backplate in CSS
+  "group/system": {
+    "orientation": "horizontal",
+    "modules": [
+      "custom/notifications",
+      "custom/mullvad",
+      "pulseaudio",
+      "backlight",
+      // Wi‑Fi pill (visual + click handler for `nmgui`)
+      "network#wifi",
+      "bluetooth",
+      // Tray stays visible for app presence without altering the rail layout.
+      "tray",
+      "custom/power"
+    ]
   },
 
   // Mullvad VPN status + controls
@@ -178,27 +218,42 @@ Time: {timeTo}"
     "format": "{text}",
     "on-click": "$HOME/.config/hypr/scripts/mullvad-status.sh --launch",
     "on-click-right": "$HOME/.config/hypr/scripts/mullvad-status.sh --toggle",
-    "interval": 2,
+    // Slower poll to reduce wakeups; click/signal 11 still force refresh.
+    "interval": 15,
     "signal": 11,
     "tooltip": true
   },
 
-  // network block
-  // - wifi: shows current {essid} only at runtime (no SSID is stored in this file)
-  // - alt format shows bandwidth up/down
-  "network": {
-    "interval": 3,
-    "format-wifi": " {essid}",
-    "format-ethernet": " {ifname}",
-    "format-disconnected": "Disconnected",
-    "format-alt": " {bandwidthUpBytes}B/s  {bandwidthDownBytes}B/s",
-    "tooltip": true,
-    "tooltip-format-wifi": "{essid}
-Signal: {signalStrength}% ({signaldBm} dBm)
-IPv4: {ipaddr}",
-    "tooltip-format-ethernet": "{ifname}
-IPv4: {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected"
+  // Optional: Network status (icon-only instance). SSID text block removed to avoid unused config drift.
+  // Reintroduce the SSID block if an SSID pill is enabled in modules-right.
+  "network#wifi": {
+    // Network signal updates remain smooth with a modest poll interval.
+    "interval": 10,
+    // icon-only pill; SSID text is handled by the optional `network#ssid` module.
+    "format": "",
+    "format-wifi": "",
+    "format-ethernet": "",
+    "format-linked": "",
+    "format-unknown": "",
+    "format-disconnected": "",
+    "format-disabled": "",
+    "tooltip": false,
+    // left-click: launch NetworkManager editor (official repos: network-manager-applet → nm-connection-editor)
+    "on-click": "nm-connection-editor"
+  },
+
+  // Bluetooth icon pill (adjacent to Wi‑Fi icon pill).
+  "bluetooth": {
+    "format": "",
+    "format-no-controller": "",
+    "format-disabled": "",
+    "format-off": "",
+    "format-on": "",
+    "format-connected": "",
+    "format-connected-battery": "",
+    "tooltip": false,
+    "on-click": "$HOME/.config/hypr/scripts/bluetooth-toggle.sh",
+    "on-click-right": "sh -lc 'command -v blueman-manager >/dev/null && blueman-manager'"
   },
 
   "pulseaudio": {
@@ -209,7 +264,9 @@ IPv4: {ipaddr}",
     "format-icons": {
       "headphones": "",
       "default": ["", "", ""]
-    }
+    },
+    // left-click: open a mixer GUI (official repos: pavucontrol)
+    "on-click": "pavucontrol"
   },
 
   // backlight scroll uses scripts/brightness-step.sh which also services brightness keybinds; path uses $HOME for portability
@@ -221,10 +278,17 @@ IPv4: {ipaddr}",
     "on-scroll-down": "$HOME/.config/hypr/scripts/brightness-step.sh down 2"
   },
 
+  // Tray applets: keep icons crisp and map common app IDs to stable icon names.
   "tray": {
-    "icon-size": 16,
-    "spacing": 8,
-    "show-passive-items": true
+    // Tray spacing aligns icon density with the right rail.
+    "icon-size": 14,
+    "spacing": 6,
+    "show-passive-items": true,
+    // Explicit icon mapping avoids empty tray items when an app fails to expose an icon name.
+    "icons": {
+      "signal desktop": "signal-tray",
+      "qBittorrent": "qbittorrent-tray"
+    }
   },
 
   // ties into scripts/power-menu.sh which loads wleave/layout.json + wleave/style.css; path uses $HOME for portability
@@ -236,15 +300,19 @@ IPv4: {ipaddr}",
     "interval": 86400
   },
 
-  // swaync badge; scripts/swaync-notifications.sh relays state + toggles DND; paths use $HOME for portability
+  // UnixNotis notifications badge (Waybar custom module)
+  //
+  // Design notes:
+  // - One-shot module renders current state and exits to avoid orphaned children.
+  // - Waybar refresh uses SIGRTMIN+N so updates are event-driven, not polled.
+  // - Notifications panel is toggled via noticenterctl to keep Waybar decoupled.
   "custom/notifications": {
     "tooltip": true,
     "return-type": "json",
-    "exec": "$HOME/.config/hypr/scripts/swaync-notifications.sh",
-    "on-click": "swaync-client -t -sw",
-    "on-click-middle": "$HOME/.config/hypr/scripts/swaync-notifications.sh toggle-dnd",
-    "on-click-right": "$HOME/.config/hypr/scripts/swaync-notifications.sh refresh",
-    "interval": 3,
-    "signal": 10
+    "interval": "once",
+    "exec": "$HOME/.config/hypr/scripts/unixnotis-notifications.sh once",
+    "signal": 9,                 // manual refresh: `pkill -RTMIN+9 waybar`
+    "on-click": "$HOME/.config/hypr/scripts/unixnotis-panel-toggle.sh",
+    "on-click-right": "pkill -RTMIN+9 waybar"
   }
 }
