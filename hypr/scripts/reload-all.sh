@@ -3,7 +3,7 @@ set -euo pipefail
 
 # one-key reload helper for the Hyprland stack
 # - wired to binds.conf Ctrl+Shift+R and Vicinae powertools
-# - reloads Hyprland, restarts Waybar + SwayNC, and nudges Vicinae
+# - reloads Hyprland, restarts Waybar, and nudges Vicinae
 
 have() {
   command -v "$1" >/dev/null 2>&1
@@ -27,14 +27,6 @@ elif have waybar; then
   setsid -f waybar >/dev/null 2>&1 || true
 fi
 
-if [ -x "$HOME/.config/hypr/scripts/start-swaync.sh" ]; then
-  systemctl --user stop mako.service >/dev/null 2>&1 || true
-  pkill -x mako 2>/dev/null || true
-  pkill -9 -f swaync 2>/dev/null || true
-  sleep 0.5
-  "$HOME/.config/hypr/scripts/start-swaync.sh" &
-fi
-
 # 3) close any open launchers so they reload config on next invoke
 if have vicinae; then
   vicinae close >/dev/null 2>&1 || true
@@ -45,7 +37,7 @@ fi
 if have notify-send; then
   notify-send --expire-time=2500 --urgency=low \
     --hint=string:x-canonical-private-synchronous:hypr-reload \
-    "!(Waybar, Hypr, Swaync, Vicinae. Have Been Reloaded)!" >/dev/null 2>&1 || true
+    "!(Waybar, Hypr, Vicinae. Have Been Reloaded)!" >/dev/null 2>&1 || true
 fi
 
 exit 0
