@@ -2,12 +2,6 @@
 -- Rule order matches the old hyprlang files
 
 hl.window_rule({
-    name = "suppress-maximize-non-vmware",
-    match = { class = "negative:^(VMware.*|vmware.*)$" },
-    suppress_event = "maximize",
-})
-
-hl.window_rule({
     name = "prefer-active-workspace",
     match = { class = "negative:^$" },
     workspace = "unset",
@@ -72,12 +66,9 @@ hl.layer_rule({
 })
 
 hl.window_rule({
-    name = "vmware",
-    match = { class = "^(VMware.*|vmware.*)$" },
-    tile = true,
-    no_blur = true,
-    no_anim = true,
-    suppress_event = "minimize",
+    name = "suppress-maximize-events",
+    match = { class = "negative:^$" },
+    suppress_event = "maximize",
 })
 
 -- Flameshot rules stay disabled while grim and satty handle screenshots
